@@ -76,18 +76,17 @@ Fill in both `.env` files first, then from the repo root:
 docker compose up --build
 ```
 
-## Deployment
-
-Supabase (DB/auth/storage) and Gemini are already external managed services — nothing to deploy there beyond pointing at your real project. What's left is a stateless FastAPI backend and a static Vite SPA, so:
-
-- **Frontend → Vercel** (Netlify/Cloudflare Pages work the same way). Import the repo, set **Root Directory** to `frontend` (framework preset: Vite, auto-detected). Set env vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_API_BASE_URL` (the backend URL from the step below — Vite bakes these in at build time, so redeploy after changing any of them). [`frontend/vercel.json`](frontend/vercel.json) adds the SPA rewrite React Router needs (without it, a direct link/refresh to a route like `/tickets/<id>` 404s instead of loading the app).
-- **Backend → Render** (Railway/Fly.io work the same way — all three build a Dockerfile directly and give you a public HTTPS URL on git push). Point it at `backend/Dockerfile`, health check path `/health`. Env vars: `DATABASE_URL`, `SUPABASE_URL`, `GEMINI_API_KEY`, `EMBEDDING_MODEL`, `LLM_MODEL`, and `CORS_ORIGINS` set to your actual Vercel domain (e.g. `["https://qsolva.vercel.app"]`) — the backend rejects cross-origin requests from anywhere not in this list.
-- **One-time migration**: before (or right after) the first backend deploy, run `python -m alembic upgrade head` from your machine with `DATABASE_URL` pointed at the *production* Supabase project — the platforms above don't run migrations for you, and this needs re-running after every new migration file lands.
-- **Keep the backend at a single instance.** `check_sla_risk` runs on an in-process APScheduler job ([main.py](backend/app/main.py)) — scaling to multiple instances/workers would run that hourly job once per instance, duplicating `sla_risk` notifications. Fine at this project's scale; would need a real job queue (or an external cron hitting an endpoint) before scaling out.
-
+**Deployment**
+Frontend: Vercel
+Backend: Render with Docker
+Database/Auth/Storage: Supabase
+AI: Google Gemini
+Configuration: Environment variables and production CORS
+Database: Alembic migrations
 ## Modules
 
 **Staff**
+
 1. **Authentication & Account** — Supabase Auth with Staff/Admin roles, login, registration, and password reset.
 
 2. **Ticket Management** — Submit tickets, view ticket history, communicate with Admin, and track ticket status.
@@ -97,6 +96,7 @@ Supabase (DB/auth/storage) and Gemini are already external managed services — 
 4. **Help Center** — Search admin-published troubleshooting articles to resolve common IT issues before submitting a ticket.
 
 **Admin**
+
 5. **Ticket Management** — Manage the ticket queue, search and filter tickets, claim or unassign tickets, and handle ticket resolution.
 
 6. **AI Assistance** — Review AI-generated priority classifications and RAG-based resolution recommendations, with the ability to override or act on suggestions.
@@ -108,6 +108,7 @@ Supabase (DB/auth/storage) and Gemini are already external managed services — 
 9. **Dashboard & Monitoring** — Monitor ticket activity, overdue tickets, AI performance, priority distribution, and emerging issues.
 
 **Shared**
+
 10. **Notifications** — Receive real-time in-app updates for ticket activity, replies, critical tickets, escalations, and resolution confirmation.
 
 11. **Resolution Feedback** — Record resolution outcomes to evaluate AI performance and improve the reliability of historical resolution knowledge.
