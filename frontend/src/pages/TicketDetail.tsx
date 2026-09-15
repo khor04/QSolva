@@ -159,7 +159,6 @@ export function TicketDetail() {
   const { ticket, messages, suggestion } = data;
   const isTicketDone = ticket.status === "resolved" || ticket.status === "closed";
   const analyzing = ticket.ai_priority_status === "pending" || ticket.ai_rag_status === "pending";
-  const aiFailed = ticket.ai_priority_status === "failed" || ticket.ai_rag_status === "failed";
 
   function handleReply(e: FormEvent) {
     e.preventDefault();
