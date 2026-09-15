@@ -77,12 +77,10 @@ docker compose up --build
 ```
 
 **Deployment**
-Frontend: Vercel
-Backend: Render with Docker
-Database/Auth/Storage: Supabase
-AI: Google Gemini
-Configuration: Environment variables and production CORS
-Database: Alembic migrations
+- **Frontend**: Vercel
+- **Backend**: Render with Docker
+- **Database/Auth/Storage**: Supabase
+
 ## Modules
 
 **Staff**
