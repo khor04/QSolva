@@ -1,0 +1,334 @@
+import uuid
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from sqlalchemy import select, update
+from sqlalchemy.orm import Session
+
+from app.deps import get_current_user, require_admin
+from app.db import get_db
+from app.models import AiSuggestion, Feedback, Ticket, TicketAttachment, TicketMessage, User
+from app.schemas import (
+    AttachmentCreate,
+    AttachmentOut,
+    FeedbackCreate,
+    MessageCreate,
+    MessageOut,
+    TicketCreate,
+    TicketDetailOut,
+    TicketOut,
+    TicketUpdate,
+)
+from app.services import tickets as ticket_service
+from app.services.notifications import notify, notify_admins
+
+router = APIRouter(prefix="/tickets", tags=["tickets"])
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _get_ticket_or_404(db: Session, ticket_id: uuid.UUID) -> Ticket:
+    ticket = db.get(Ticket, ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    return ticket
+
+
+def _authorize_ticket_access(ticket: Ticket, user: User) -> None:
+    if user.role == "admin":
+        return
+    if ticket.staff_id != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your ticket")
+
+
+def _ensure_not_done(ticket: Ticket) -> None:
+    """Once a ticket is resolved (awaiting staff confirmation) or closed
+    (confirmed), claim/unassign/escalate/re-resolve no longer make sense.
+    The only way out of "resolved" is the staff feedback endpoint, which
+    doesn't go through this check."""
+    if ticket.status in ("resolved", "closed"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Ticket is already {ticket.status}",
+        )
+
+
+@router.post("", response_model=TicketOut, status_code=status.HTTP_201_CREATED)
+def create_ticket(
+    payload: TicketCreate,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user.role != "staff":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only staff can submit tickets")
+
+    now = _now()
+    ticket = Ticket(
+        staff_id=user.id,
+        title=payload.title,
+        description=payload.description,
+        category=payload.category,
+        status="open",
+        priority="medium",
+        priority_source="ai",
+        ai_priority_status="pending",
+        ai_rag_status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(ticket)
+    db.commit()
+    db.refresh(ticket)
+
+    background_tasks.add_task(_run_process_new_ticket, ticket.id)
+    return ticket
+
+
+def _run_process_new_ticket(ticket_id: uuid.UUID) -> None:
+    import asyncio
+
+    asyncio.run(ticket_service.process_new_ticket(ticket_id))
+
+
+@router.post("/{ticket_id}/retry-enrichment", response_model=TicketOut)
+def retry_enrichment(
+    ticket_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    _admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    ticket = _get_ticket_or_404(db, ticket_id)
+
+    # Atomically claim each failed stage by flipping it to "pending" only if
+    # it's still "failed" right now. A second concurrent retry (double-click,
+    # or two admins on the same ticket) then claims 0 rows for whatever the
+    # first request already grabbed, instead of both kicking off duplicate
+    # Gemini calls for the same ticket.
+    claimed_priority = (
+        db.execute(
+            update(Ticket)
+            .where(Ticket.id == ticket.id, Ticket.ai_priority_status == "failed")
+            .values(ai_priority_status="pending")
+        ).rowcount
+        > 0
+    )
+    claimed_rag = (
+        db.execute(
+            update(Ticket)
+            .where(Ticket.id == ticket.id, Ticket.ai_rag_status == "failed")
+            .values(ai_rag_status="pending")
+        ).rowcount
+        > 0
+    )
+    db.commit()
+
+    if not claimed_priority and not claimed_rag:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Nothing to retry — AI analysis already completed, or a retry is already in progress",
+        )
+
+    db.refresh(ticket)
+    background_tasks.add_task(_run_retry_enrichment, ticket.id)
+    return ticket
+
+
+def _run_retry_enrichment(ticket_id: uuid.UUID) -> None:
+    import asyncio
+
+    asyncio.run(ticket_service.retry_enrichment(ticket_id))
+
+
+@router.get("", response_model=list[TicketOut])
+def list_my_tickets(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    stmt = select(Ticket).where(Ticket.staff_id == user.id).order_by(Ticket.updated_at.desc())
+    return list(db.execute(stmt).scalars())
+
+
+@router.get("/queue", response_model=list[TicketOut])
+def list_queue(_admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    stmt = select(Ticket).order_by(Ticket.priority.desc(), Ticket.created_at.asc())
+    return list(db.execute(stmt).scalars())
+
+
+@router.get("/{ticket_id}", response_model=TicketDetailOut)
+def get_ticket_detail(ticket_id: uuid.UUID, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ticket = _get_ticket_or_404(db, ticket_id)
+    _authorize_ticket_access(ticket, user)
+
+    messages = list(
+        db.execute(
+            select(TicketMessage).where(TicketMessage.ticket_id == ticket.id).order_by(TicketMessage.created_at)
+        ).scalars()
+    )
+    suggestion = db.execute(
+        select(AiSuggestion)
+        .where(AiSuggestion.ticket_id == ticket.id)
+        .order_by(AiSuggestion.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    attachments = list(
+        db.execute(
+            select(TicketAttachment)
+            .where(TicketAttachment.ticket_id == ticket.id)
+            .order_by(TicketAttachment.created_at)
+        ).scalars()
+    )
+
+    return TicketDetailOut(ticket=ticket, messages=messages, suggestion=suggestion, attachments=attachments)
+
+
+@router.patch("/{ticket_id}", response_model=TicketOut)
+def update_ticket(
+    ticket_id: uuid.UUID,
+    payload: TicketUpdate,
+    _admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    ticket = _get_ticket_or_404(db, ticket_id)
+    if payload.status == "escalated":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Use POST /tickets/{id}/escalate to escalate a ticket",
+        )
+    if payload.status is not None:
+        _ensure_not_done(ticket)
+        ticket.status = payload.status
+        if payload.status == "resolved":
+            ticket.resolved_at = _now()
+            notify(db, ticket.staff_id, "resolution_confirm_needed", ticket.id)
+        else:
+            if payload.status == "closed":
+                ticket.closed_at = _now()
+            notify(db, ticket.staff_id, "ticket_updated", ticket.id)
+    elif payload.priority is not None:
+        notify(db, ticket.staff_id, "ticket_updated", ticket.id)
+    if payload.priority is not None:
+        ticket.priority = payload.priority
+        ticket.priority_source = "manual"
+        # These describe the AI's own assessment; once an admin overrides
+        # the priority they no longer apply and would be misleading if shown.
+        ticket.priority_confidence = None
+        ticket.priority_reason = None
+    ticket.updated_at = _now()
+    db.commit()
+    db.refresh(ticket)
+    return ticket
+
+
+@router.post("/{ticket_id}/messages", response_model=MessageOut, status_code=status.HTTP_201_CREATED)
+def post_message(
+    ticket_id: uuid.UUID,
+    payload: MessageCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    ticket = _get_ticket_or_404(db, ticket_id)
+    _authorize_ticket_access(ticket, user)
+
+    message = TicketMessage(ticket_id=ticket.id, sender_id=user.id, body=payload.body, created_at=_now())
+    db.add(message)
+    ticket.updated_at = _now()
+
+    if user.role == "staff":
+        if ticket.assigned_admin_id:
+            notify(db, ticket.assigned_admin_id, "staff_replied", ticket.id)
+        else:
+            notify_admins(db, "staff_replied", ticket.id)
+    else:
+        notify(db, ticket.staff_id, "ticket_replied", ticket.id)
+
+    db.commit()
+    db.refresh(message)
+    return message
+
+
+@router.post("/{ticket_id}/attachments", response_model=AttachmentOut, status_code=status.HTTP_201_CREATED)
+def add_attachment(
+    ticket_id: uuid.UUID,
+    payload: AttachmentCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Records an attachment after the file has already been uploaded directly
+    to Supabase Storage from the client (see lib/storage.ts on the frontend).
+    This endpoint just links the resulting URL to the ticket."""
+    ticket = _get_ticket_or_404(db, ticket_id)
+    _authorize_ticket_access(ticket, user)
+
+    attachment = TicketAttachment(
+        ticket_id=ticket.id,
+        uploaded_by=user.id,
+        file_url=payload.file_url,
+        created_at=_now(),
+    )
+    db.add(attachment)
+    db.commit()
+    db.refresh(attachment)
+    return attachment
+
+
+@router.post("/{ticket_id}/claim", response_model=TicketOut)
+def claim_ticket(ticket_id: uuid.UUID, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    ticket = _get_ticket_or_404(db, ticket_id)
+    _ensure_not_done(ticket)
+    ticket_service.claim_ticket(db, ticket, admin.id)
+    db.refresh(ticket)
+    return ticket
+
+
+@router.post("/{ticket_id}/unassign", response_model=TicketOut)
+def unassign_ticket(ticket_id: uuid.UUID, _admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    ticket = _get_ticket_or_404(db, ticket_id)
+    _ensure_not_done(ticket)
+    ticket_service.unassign_ticket(db, ticket)
+    db.refresh(ticket)
+    return ticket
+
+
+@router.post("/{ticket_id}/escalate", response_model=TicketOut)
+def escalate_ticket(ticket_id: uuid.UUID, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    ticket = _get_ticket_or_404(db, ticket_id)
+    _ensure_not_done(ticket)
+    if ticket.assigned_admin_id != admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only the assigned admin can escalate this ticket",
+        )
+    ticket_service.escalate_ticket(db, ticket, admin.id)
+    db.refresh(ticket)
+    return ticket
+
+
+@router.post("/{ticket_id}/feedback", status_code=status.HTTP_201_CREATED)
+def submit_feedback(
+    ticket_id: uuid.UUID,
+    payload: FeedbackCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    ticket = _get_ticket_or_404(db, ticket_id)
+    _authorize_ticket_access(ticket, user)
+
+    suggestion = db.execute(
+        select(AiSuggestion)
+        .where(AiSuggestion.ticket_id == ticket.id)
+        .order_by(AiSuggestion.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    feedback = Feedback(
+        ai_suggestion_id=suggestion.id if suggestion else None,
+        ticket_id=ticket.id,
+        staff_id=user.id,
+        outcome=payload.outcome,
+        comment=payload.comment,
+        created_at=_now(),
+    )
+    db.add(feedback)
+    ticket_service.apply_feedback_to_ticket(db, ticket, suggestion, payload.outcome)
+    return {"status": "recorded"}

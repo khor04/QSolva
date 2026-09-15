@@ -1,0 +1,25 @@
+services:
+  backend:
+    build: ./backend
+    # Dockerfile's own CMD is the production-safe default (no --reload,
+    # deployed as-is to Render/Railway/Fly); override it here for local
+    # dev hot-reload only, matching the bind-mounted source below.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    env_file:
+      - ./frontend/.env
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
