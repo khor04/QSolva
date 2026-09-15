@@ -223,9 +223,7 @@ export function TicketDetail() {
                   Escalated by{" "}
                   {ticket.escalated_by_admin_id === profile?.id
                     ? "you"
-                    : ticket.escalated_by_admin_id
-                      ? ticket.escalated_by_admin_id.slice(0, 8)
-                      : "another admin"}{" "}
+                    : ticket.escalated_by_admin_name ?? "another admin"}{" "}
                   — back in the queue for another admin to take over.
                 </p>
               )}

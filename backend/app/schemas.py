@@ -42,7 +42,9 @@ class TicketOut(BaseModel):
     id: uuid.UUID
     staff_id: uuid.UUID
     assigned_admin_id: uuid.UUID | None
+    assigned_admin_name: str | None
     escalated_by_admin_id: uuid.UUID | None
+    escalated_by_admin_name: str | None
     title: str
     description: str
     category: TicketCategory

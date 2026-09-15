@@ -11,7 +11,9 @@ export interface Ticket {
   id: string;
   staff_id: string;
   assigned_admin_id: string | null;
+  assigned_admin_name: string | null;
   escalated_by_admin_id: string | null;
+  escalated_by_admin_name: string | null;
   title: string;
   description: string;
   category: TicketCategory;

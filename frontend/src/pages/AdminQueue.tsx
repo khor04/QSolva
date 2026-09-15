@@ -88,9 +88,9 @@ function QueueTable({ tickets, currentAdminId }: { tickets: Ticket[]; currentAdm
                   {ticket.assigned_admin_id
                     ? ticket.assigned_admin_id === currentAdminId
                       ? "You"
-                      : ticket.assigned_admin_id.slice(0, 8)
+                      : ticket.assigned_admin_name ?? "Unknown admin"
                     : ticket.status === "escalated" && ticket.escalated_by_admin_id
-                      ? `Escalated by ${ticket.escalated_by_admin_id === currentAdminId ? "you" : ticket.escalated_by_admin_id.slice(0, 8)}`
+                      ? `Escalated by ${ticket.escalated_by_admin_id === currentAdminId ? "you" : ticket.escalated_by_admin_name ?? "unknown admin"}`
                       : "Unassigned"}
                 </td>
                 <td className="truncate px-4 py-3 text-neutral-500">

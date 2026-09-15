@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.deps import get_current_user, require_admin
 from app.db import get_db
@@ -144,13 +144,22 @@ def _run_retry_enrichment(ticket_id: uuid.UUID) -> None:
 
 @router.get("", response_model=list[TicketOut])
 def list_my_tickets(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    stmt = select(Ticket).where(Ticket.staff_id == user.id).order_by(Ticket.updated_at.desc())
+    stmt = (
+        select(Ticket)
+        .where(Ticket.staff_id == user.id)
+        .order_by(Ticket.updated_at.desc())
+        .options(selectinload(Ticket.assigned_admin), selectinload(Ticket.escalated_by_admin))
+    )
     return list(db.execute(stmt).scalars())
 
 
 @router.get("/queue", response_model=list[TicketOut])
 def list_queue(_admin: User = Depends(require_admin), db: Session = Depends(get_db)):
-    stmt = select(Ticket).order_by(Ticket.priority.desc(), Ticket.created_at.asc())
+    stmt = (
+        select(Ticket)
+        .order_by(Ticket.priority.desc(), Ticket.created_at.asc())
+        .options(selectinload(Ticket.assigned_admin), selectinload(Ticket.escalated_by_admin))
+    )
     return list(db.execute(stmt).scalars())
 
 

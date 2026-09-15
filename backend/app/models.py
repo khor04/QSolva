@@ -83,6 +83,18 @@ class Ticket(Base):
     messages: Mapped[list["TicketMessage"]] = relationship(back_populates="ticket", order_by="TicketMessage.created_at")
     suggestions: Mapped[list["AiSuggestion"]] = relationship(back_populates="ticket", order_by="AiSuggestion.created_at.desc()")
     embedding: Mapped["TicketEmbedding | None"] = relationship(back_populates="ticket", uselist=False)
+    # Three separate FKs to users(id) on this table, so each relationship
+    # needs its own foreign_keys= to disambiguate which column it follows.
+    assigned_admin: Mapped["User | None"] = relationship(foreign_keys=[assigned_admin_id])
+    escalated_by_admin: Mapped["User | None"] = relationship(foreign_keys=[escalated_by_admin_id])
+
+    @property
+    def assigned_admin_name(self) -> str | None:
+        return self.assigned_admin.name if self.assigned_admin else None
+
+    @property
+    def escalated_by_admin_name(self) -> str | None:
+        return self.escalated_by_admin.name if self.escalated_by_admin else None
 
 
 class TicketMessage(Base):
