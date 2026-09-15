@@ -195,6 +195,17 @@ class NotificationOut(BaseModel):
     created_at: datetime
 
 
+class AdminInviteCodeCreate(BaseModel):
+    expires_in_days: int | None = 7
+    max_uses: int = 1
+
+
+class AdminInviteCodeOut(BaseModel):
+    code: str
+    expires_at: datetime | None
+    max_uses: int
+
+
 class PriorityDistribution(BaseModel):
     critical: int
     high: int

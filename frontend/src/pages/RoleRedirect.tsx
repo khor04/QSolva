@@ -3,5 +3,5 @@ import { useAuth } from "@/lib/auth";
 
 export function RoleRedirect() {
   const { profile } = useAuth();
-  return <Navigate to={profile?.role === "admin" ? "/queue" : "/tickets"} replace />;
+  return <Navigate to={profile?.role === "admin" ? "/dashboard" : "/tickets"} replace />;
 }

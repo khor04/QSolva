@@ -38,6 +38,12 @@ def get_current_user(
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if user.deleted_at is not None:
+        # Rejected here rather than relying on Supabase to invalidate the
+        # session: an already-issued access token stays cryptographically
+        # valid until it expires regardless of what happens to the account,
+        # so this is what actually stops it from working right away.
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account deleted")
     return user
 
 

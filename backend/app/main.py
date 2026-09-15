@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import dashboard, help_center, issues, notifications, tickets
+from app.routers import account, admin, dashboard, help_center, issues, notifications, tickets
 from app.services.sla import check_sla_risk
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -37,6 +37,8 @@ app.include_router(dashboard.router)
 app.include_router(notifications.router)
 app.include_router(issues.router)
 app.include_router(help_center.router)
+app.include_router(admin.router)
+app.include_router(account.router)
 
 
 @app.get("/health")

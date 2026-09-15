@@ -195,6 +195,11 @@ def update_ticket(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Use POST /tickets/{id}/escalate to escalate a ticket",
         )
+    if payload.status == "open" and ticket.assigned_admin_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Use POST /tickets/{id}/unassign to release an assigned ticket back to the queue",
+        )
     if payload.status is not None:
         _ensure_not_done(ticket)
         ticket.status = payload.status

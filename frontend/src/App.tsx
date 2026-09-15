@@ -15,6 +15,8 @@ import { IssuesList } from "@/pages/IssuesList";
 import { IssueDetail } from "@/pages/IssueDetail";
 import { HelpCenter } from "@/pages/HelpCenter";
 import { HelpCenterArticle } from "@/pages/HelpCenterArticle";
+import { AdminAccess } from "@/pages/AdminAccess";
+import { Profile } from "@/pages/Profile";
 
 function App() {
   return (
@@ -33,6 +35,7 @@ function App() {
           }
         >
           <Route path="/" element={<RoleRedirect />} />
+          <Route path="/profile" element={<Profile />} />
 
           <Route path="/tickets" element={<ProtectedRoute allow={["staff"]}><MyTickets /></ProtectedRoute>} />
           <Route path="/tickets/new" element={<ProtectedRoute allow={["staff"]}><NewTicket /></ProtectedRoute>} />
@@ -44,6 +47,7 @@ function App() {
           <Route path="/dashboard" element={<ProtectedRoute allow={["admin"]}><Dashboard /></ProtectedRoute>} />
           <Route path="/issues" element={<ProtectedRoute allow={["admin"]}><IssuesList /></ProtectedRoute>} />
           <Route path="/issues/:id" element={<ProtectedRoute allow={["admin"]}><IssueDetail /></ProtectedRoute>} />
+          <Route path="/admin-access" element={<ProtectedRoute allow={["admin"]}><AdminAccess /></ProtectedRoute>} />
         </Route>
       </Routes>
     </BrowserRouter>

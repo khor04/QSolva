@@ -45,6 +45,12 @@ class User(Base):
     email: Mapped[str] = mapped_column(Text, unique=True)
     role: Mapped[str] = mapped_column(user_role, default="staff")
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    # Set by self-service account deletion (see routers/account.py) instead
+    # of actually deleting the row — every ticket/message/feedback FK points
+    # at users(id), so anonymizing in place makes them all resolve to
+    # "Deleted User" for free. Checked in deps.get_current_user so an
+    # already-issued JWT stops working immediately.
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
 class Ticket(Base):
@@ -159,6 +165,23 @@ class IssueCluster(Base):
     article_published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class AdminInviteCode(Base):
+    """Mirrors admin_invite_codes (see alembic 0008) — created here so an
+    admin can self-service generate codes for other admins; the raw code
+    itself is never persisted, only its hash, and it's returned to the
+    caller exactly once at creation time."""
+
+    __tablename__ = "admin_invite_codes"
+
+    code_hash: Mapped[str] = mapped_column(Text, primary_key=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    max_uses: Mapped[int] = mapped_column(default=1)
+    used_count: Mapped[int] = mapped_column(default=0)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
 
 
 class Notification(Base):

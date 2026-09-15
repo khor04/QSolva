@@ -87,6 +87,12 @@ export interface Notification {
   created_at: string;
 }
 
+export interface AdminInviteCode {
+  code: string;
+  expires_at: string | null;
+  max_uses: number;
+}
+
 export type IssueSeverity = "emerging" | "elevated" | "watch";
 export type KbArticleStatus = "draft" | "published";
 

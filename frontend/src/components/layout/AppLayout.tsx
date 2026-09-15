@@ -19,6 +19,7 @@ const adminLinks: NavItem[] = [
   { to: "/dashboard", label: "Dashboard" },
   { to: "/queue", label: "Ticket Queue" },
   { to: "/issues", label: "Recurring Issues" },
+  { to: "/admin-access", label: "Admin Access" },
 ];
 
 export function AppLayout() {
@@ -45,7 +46,9 @@ export function AppLayout() {
           </nav>
         </div>
         <div className="flex items-center gap-4 text-sm text-neutral-500">
-          <span>{profile?.name} ({profile?.role})</span>
+          <NavLink to="/profile" className="hover:text-primary-dark hover:underline">
+            {profile?.name} ({profile?.role})
+          </NavLink>
           <NotificationBell />
           <button
             type="button"
