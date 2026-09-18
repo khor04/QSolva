@@ -10,6 +10,7 @@ TicketCategory = Literal["network", "hardware", "software", "email_account", "ac
 AiSuggestionState = Literal["available", "accepted", "rejected", "not_applicable"]
 FeedbackOutcome = Literal["solved", "partially_solved", "did_not_solve", "wrong_recommendation", "other"]
 PrioritySource = Literal["ai", "manual"]
+IncidentStatus = Literal["active", "resolved"]
 AiPriorityStatus = Literal["pending", "success", "failed"]
 AiRagStatus = Literal["pending", "success", "no_match", "failed"]
 NotificationType = Literal[
@@ -22,6 +23,7 @@ NotificationType = Literal[
     "ticket_escalated",
     "suggestion_failed",
     "sla_risk",
+    "incident_alert",
 ]
 
 
@@ -107,11 +109,24 @@ class AttachmentOut(BaseModel):
     created_at: datetime
 
 
+class RelatedActivityOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    active_reports: int
+    window_hours: int
+    someone_working_on_it: bool
+    incident_status: IncidentStatus | None
+    incident_message: str | None
+
+
 class TicketDetailOut(BaseModel):
     ticket: TicketOut
     messages: list[MessageOut]
     suggestion: SuggestionOut | None
     attachments: list[AttachmentOut]
+    # None when there's nothing worth surfacing yet — see
+    # services/issues.related_activity_for.
+    related_activity: RelatedActivityOut | None = None
 
 
 class FeedbackCreate(BaseModel):
@@ -151,6 +166,9 @@ class IssueClusterSummary(BaseModel):
     pct_change: float | None
     severity: IssueSeverity
     article_status: KbArticleStatus | None
+    incident_status: IncidentStatus | None
+    incident_message: str | None
+    incident_updated_at: datetime | None
 
 
 class ResolutionEvidenceCounts(BaseModel):
@@ -174,6 +192,26 @@ class ArticleEdit(BaseModel):
     answer: str
 
 
+class IncidentStart(BaseModel):
+    message: str
+    notify_all_staff: bool = False
+
+
+class IncidentResolve(BaseModel):
+    resolution_text: str
+
+
+class ActiveIncidentCheck(BaseModel):
+    title: str
+    description: str
+
+
+class ActiveIncidentMatch(BaseModel):
+    cluster_id: uuid.UUID
+    label: str
+    message: str | None
+
+
 class HelpCenterArticleSummary(BaseModel):
     id: uuid.UUID
     label: str
@@ -193,6 +231,7 @@ class NotificationOut(BaseModel):
     type: NotificationType
     ticket_id: uuid.UUID | None
     ticket_title: str | None
+    message: str | None
     is_read: bool
     created_at: datetime
 

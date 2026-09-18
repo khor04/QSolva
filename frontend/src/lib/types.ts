@@ -62,11 +62,22 @@ export interface TicketAttachment {
   created_at: string;
 }
 
+export type IncidentStatus = "active" | "resolved";
+
+export interface RelatedActivity {
+  active_reports: number;
+  window_hours: number;
+  someone_working_on_it: boolean;
+  incident_status: IncidentStatus | null;
+  incident_message: string | null;
+}
+
 export interface TicketDetailResponse {
   ticket: Ticket;
   messages: TicketMessage[];
   suggestion: AiSuggestion | null;
   attachments: TicketAttachment[];
+  related_activity: RelatedActivity | null;
 }
 
 export type NotificationType =
@@ -78,13 +89,15 @@ export type NotificationType =
   | "staff_replied"
   | "suggestion_failed"
   | "sla_risk"
-  | "ticket_escalated";
+  | "ticket_escalated"
+  | "incident_alert";
 
 export interface Notification {
   id: string;
   type: NotificationType;
   ticket_id: string | null;
   ticket_title: string | null;
+  message: string | null;
   is_read: boolean;
   created_at: string;
 }
@@ -107,6 +120,9 @@ export interface IssueClusterSummary {
   pct_change: number | null;
   severity: IssueSeverity;
   article_status: KbArticleStatus | null;
+  incident_status: IncidentStatus | null;
+  incident_message: string | null;
+  incident_updated_at: string | null;
 }
 
 export interface IssueTimelinePoint {
@@ -156,4 +172,10 @@ export interface HelpCenterArticleSummary {
 export interface HelpCenterArticleDetail extends HelpCenterArticleSummary {
   answer: string;
   member_count: number;
+}
+
+export interface ActiveIncidentMatch {
+  cluster_id: string;
+  label: string;
+  message: string | null;
 }

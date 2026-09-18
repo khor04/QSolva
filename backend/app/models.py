@@ -30,11 +30,13 @@ feedback_outcome_enum = ENUM(
 notification_type_enum = ENUM(
     "ticket_updated", "ticket_replied", "ticket_resolved", "resolution_confirm_needed",
     "new_critical_ticket", "staff_replied", "suggestion_failed", "sla_risk", "ticket_escalated",
+    "incident_alert",
     name="notification_type", create_type=False,
 )
 kb_article_status_enum = ENUM("draft", "published", name="kb_article_status", create_type=False)
 ai_priority_status_enum = ENUM("pending", "success", "failed", name="ai_priority_status", create_type=False)
 ai_rag_status_enum = ENUM("pending", "success", "no_match", "failed", name="ai_rag_status", create_type=False)
+incident_status_enum = ENUM("active", "resolved", name="incident_status", create_type=False)
 
 
 class User(Base):
@@ -175,6 +177,12 @@ class IssueCluster(Base):
     article_status: Mapped[str | None] = mapped_column(kb_article_status_enum, nullable=True)
     article_generated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     article_published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # Null until an admin explicitly declares this cluster an active
+    # incident (see services/issues.start_incident/resolve_incident) — never
+    # set automatically just because member_count is high.
+    incident_status: Mapped[str | None] = mapped_column(incident_status_enum, nullable=True)
+    incident_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    incident_updated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
 
@@ -203,5 +211,8 @@ class Notification(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     type: Mapped[str] = mapped_column(notification_type_enum)
     ticket_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("tickets.id"), nullable=True)
+    # Only set for ticket_id-less broadcast notifications (currently just
+    # incident_alert) — there's no ticket to derive a templated message from.
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))

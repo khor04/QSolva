@@ -14,13 +14,14 @@ only a ticket closed with no resolution text at all contributes nothing).
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import AiSuggestion, Feedback, IssueCluster, Ticket, TicketMessage, User
 from app.services import ai
+from app.services.notifications import all_staff_ids, notify
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,10 @@ SIMILARITY_THRESHOLD = 0.70  # cosine similarity required to join an existing cl
 MIN_MEMBERS_FOR_SUMMARY = 3  # a cluster needs this many tickets before an AI label makes sense
 RESUMMARIZE_EVERY = 3  # refresh the label/symptoms every N members after that
 SUMMARY_SAMPLE_SIZE = 10
+
+OPEN_STATUSES = ("open", "in_progress", "escalated")
+RELATED_ACTIVITY_WINDOW_HOURS = 24  # "recent" for the "others are reporting this" banner
+MIN_RELATED_FOR_BANNER = 2  # one other duplicate ticket isn't a signal worth surfacing on its own
 
 
 def _now() -> datetime:
@@ -115,6 +120,149 @@ def gather_evidence(db: Session, cluster_id: uuid.UUID) -> ResolutionEvidence:
         else:
             evidence.admin_resolved.append(text)
     return evidence
+
+
+@dataclass
+class RelatedActivity:
+    """"Others are already reporting this" signal for a single ticket's
+    detail page: is this a known, currently-active problem rather than
+    something the reporter is waiting on alone."""
+
+    active_reports: int
+    window_hours: int
+    someone_working_on_it: bool
+    incident_status: str | None
+    incident_message: str | None
+
+
+def related_activity_for(db: Session, ticket: Ticket) -> RelatedActivity | None:
+    """None means there's nothing worth surfacing — either the ticket isn't
+    clustered yet, or it's the only recent/open report in its cluster and no
+    admin has declared an incident. Returns a populated RelatedActivity as
+    soon as either condition says otherwise, so the frontend can show a
+    banner instead of leaving the reporter to wait in silence."""
+    if ticket.cluster_id is None:
+        return None
+    cluster = db.get(IssueCluster, ticket.cluster_id)
+    if cluster is None:
+        return None
+
+    since = _now() - timedelta(hours=RELATED_ACTIVITY_WINDOW_HOURS)
+    rows = db.execute(
+        select(Ticket.assigned_admin_id).where(
+            Ticket.cluster_id == cluster.id,
+            Ticket.id != ticket.id,
+            Ticket.created_at >= since,
+            Ticket.status.in_(OPEN_STATUSES),
+        )
+    ).all()
+    active_reports = len(rows)
+    incident_active = cluster.incident_status == "active"
+
+    if active_reports < MIN_RELATED_FOR_BANNER and not incident_active:
+        return None
+
+    return RelatedActivity(
+        active_reports=active_reports,
+        window_hours=RELATED_ACTIVITY_WINDOW_HOURS,
+        someone_working_on_it=incident_active or any(admin_id is not None for (admin_id,) in rows),
+        incident_status=cluster.incident_status,
+        incident_message=cluster.incident_message if incident_active else None,
+    )
+
+
+def start_incident(
+    db: Session, cluster: IssueCluster, message: str, admin: User, notify_all_staff: bool = False
+) -> int:
+    """Declares (or updates the status message of) an active incident, and
+    — only on the transition into "active" — notifies people about it,
+    rather than re-notifying everyone each time the admin tweaks the
+    message. By default that's just staff with a still-open ticket in the
+    cluster; for something like a VPN outage that affects everyone on VPN,
+    not only the handful who've already filed a ticket, notify_all_staff
+    broadcasts to the whole staff roster instead. Returns how many people
+    were notified.
+
+    Staff who already have an open ticket in the cluster still get the
+    ticket-scoped notification (so it links straight to their own ticket)
+    even in broadcast mode; only staff with no ticket in the cluster get the
+    generic incident_alert."""
+    was_active = cluster.incident_status == "active"
+    cluster.incident_status = "active"
+    cluster.incident_message = message
+    cluster.incident_updated_at = _now()
+
+    tickets = db.execute(
+        select(Ticket).where(Ticket.cluster_id == cluster.id, Ticket.status.in_(OPEN_STATUSES))
+    ).scalars().all()
+    reporting_staff = {t.staff_id: t.id for t in tickets}
+
+    notified = 0
+    if not was_active:
+        for staff_id, ticket_id in reporting_staff.items():
+            notify(db, staff_id, "ticket_updated", ticket_id)
+            notified += 1
+        if notify_all_staff:
+            for staff_id in all_staff_ids(db):
+                if staff_id in reporting_staff:
+                    continue  # already got the ticket-scoped notification above
+                notify(db, staff_id, "incident_alert", message=message)
+                notified += 1
+    db.commit()
+    return notified
+
+
+def resolve_incident(db: Session, cluster: IssueCluster, resolution_text: str, admin: User) -> int:
+    """Bulk-resolves every still-open ticket in the cluster with one shared
+    reply, so an admin doesn't have to retype the same resolution into each
+    of (potentially dozens of) individual tickets. Returns how many tickets
+    were resolved."""
+    now = _now()
+    tickets = db.execute(
+        select(Ticket).where(Ticket.cluster_id == cluster.id, Ticket.status.in_(OPEN_STATUSES))
+    ).scalars().all()
+    for t in tickets:
+        db.add(TicketMessage(ticket_id=t.id, sender_id=admin.id, body=resolution_text, created_at=now))
+        t.status = "resolved"
+        t.resolved_at = now
+        t.updated_at = now
+        t.escalated_by_admin_id = None
+        notify(db, t.staff_id, "resolution_confirm_needed", t.id)
+
+    cluster.incident_status = "resolved"
+    cluster.incident_updated_at = now
+    db.commit()
+    return len(tickets)
+
+
+async def match_active_incident(db: Session, title: str, description: str) -> IssueCluster | None:
+    """Pre-submit check for the New Ticket form: does this draft match a
+    currently *active* incident, so the reporter can be told before they
+    file a duplicate of something already known. Deliberately scoped to
+    active incidents only (not "any similar past ticket" — that's already
+    covered post-submission by the RAG suggestion), so declaring zero
+    incidents — the common case — costs no extra embedding call on every
+    single ticket submission."""
+    has_active_incident = db.execute(
+        select(IssueCluster.id).where(IssueCluster.incident_status == "active").limit(1)
+    ).first()
+    if has_active_incident is None:
+        return None
+
+    embedding = await ai.embed_text(f"{title}\n{description}")
+    distance = IssueCluster.centroid_embedding.cosine_distance(embedding)
+    best = db.execute(
+        select(IssueCluster, distance.label("distance"))
+        .where(IssueCluster.incident_status == "active")
+        .order_by(distance)
+        .limit(1)
+    ).first()
+    if best is None:
+        return None
+    cluster, dist = best
+    if (1 - float(dist)) < SIMILARITY_THRESHOLD:
+        return None
+    return cluster
 
 
 async def assign_cluster(db: Session, ticket: Ticket, embedding: list[float]) -> IssueCluster:

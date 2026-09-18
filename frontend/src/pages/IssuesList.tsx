@@ -63,17 +63,24 @@ export function IssuesList() {
                 </p>
                 <p className="mt-1 text-xs capitalize text-neutral-400">{issue.category.replace("_", " ")}</p>
               </div>
-              {issue.article_status && (
-                <span
-                  className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
-                    issue.article_status === "published"
-                      ? "bg-green-100 text-green-700"
-                      : "bg-amber-100 text-amber-700"
-                  }`}
-                >
-                  {issue.article_status === "published" ? "🟢 Published" : "🟡 Draft"}
-                </span>
-              )}
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                {issue.incident_status === "active" && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                    🔶 Active incident
+                  </span>
+                )}
+                {issue.article_status && (
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                      issue.article_status === "published"
+                        ? "bg-green-100 text-green-700"
+                        : "bg-amber-100 text-amber-700"
+                    }`}
+                  >
+                    {issue.article_status === "published" ? "🟢 Published" : "🟡 Draft"}
+                  </span>
+                )}
+              </div>
             </div>
           </Link>
         ))}

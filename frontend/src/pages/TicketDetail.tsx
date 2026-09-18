@@ -156,7 +156,7 @@ export function TicketDetail() {
   if (isLoading) return <p className="text-sm text-neutral-500">Loading...</p>;
   if (error || !data) return <p className="text-sm text-red-600">Failed to load ticket.</p>;
 
-  const { ticket, messages, suggestion } = data;
+  const { ticket, messages, suggestion, related_activity } = data;
   const isTicketDone = ticket.status === "resolved" || ticket.status === "closed";
   const analyzing = ticket.ai_priority_status === "pending" || ticket.ai_rag_status === "pending";
 
@@ -172,6 +172,34 @@ export function TicketDetail() {
         <PriorityBadge priority={ticket.priority} />
         <StatusBadge status={ticket.status} />
       </div>
+
+      {related_activity && (
+        <div
+          className={`mb-6 rounded-lg border p-3 text-sm ${
+            related_activity.incident_status === "active"
+              ? "border-amber-300 bg-amber-50 text-amber-900"
+              : "border-primary-light/50 bg-primary-light/10 text-neutral-700"
+          }`}
+        >
+          {related_activity.incident_status === "active" ? (
+            <>
+              <p className="font-medium">🔶 Known active incident</p>
+              <p className="mt-1 whitespace-pre-wrap">{related_activity.incident_message}</p>
+            </>
+          ) : (
+            <p>
+              👥 {related_activity.active_reports} other{" "}
+              {related_activity.active_reports === 1 ? "person has" : "people have"} reported a similar issue
+              in the last {related_activity.window_hours}h
+              {related_activity.someone_working_on_it
+                ? isAdmin
+                  ? " — another admin has already claimed one of them."
+                  : " — IT is already looking into it."
+                : "."}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.3fr_1fr]">
         {/* Conversation */}

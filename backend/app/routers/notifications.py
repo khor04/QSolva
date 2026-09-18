@@ -23,6 +23,7 @@ def _to_out(notification: Notification, ticket_title: str | None) -> Notificatio
         type=notification.type,
         ticket_id=notification.ticket_id,
         ticket_title=ticket_title,
+        message=notification.message,
         is_read=notification.is_read,
         created_at=notification.created_at,
     )

@@ -9,6 +9,8 @@ from app.deps import get_current_user, require_admin
 from app.db import get_db
 from app.models import AiSuggestion, Feedback, Ticket, TicketAttachment, TicketMessage, User
 from app.schemas import (
+    ActiveIncidentCheck,
+    ActiveIncidentMatch,
     AttachmentCreate,
     AttachmentOut,
     FeedbackCreate,
@@ -20,6 +22,7 @@ from app.schemas import (
     TicketUpdate,
 )
 from app.services import tickets as ticket_service
+from app.services.issues import match_active_incident, related_activity_for
 from app.services.notifications import notify, notify_admins
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
@@ -91,6 +94,23 @@ def _run_process_new_ticket(ticket_id: uuid.UUID) -> None:
     import asyncio
 
     asyncio.run(ticket_service.process_new_ticket(ticket_id))
+
+
+@router.post("/check-active-incident", response_model=ActiveIncidentMatch | None)
+async def check_active_incident(
+    payload: ActiveIncidentCheck,
+    _user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Called from the New Ticket form before submission, so a reporter can
+    be told "this looks like a known issue" instead of filing a duplicate of
+    something IT has already declared an incident for. See
+    services/issues.match_active_incident for why this is cheap (no AI call
+    at all) when there's no active incident to match against."""
+    cluster = await match_active_incident(db, payload.title, payload.description)
+    if cluster is None:
+        return None
+    return ActiveIncidentMatch(cluster_id=cluster.id, label=cluster.label, message=cluster.incident_message)
 
 
 @router.post("/{ticket_id}/retry-enrichment", response_model=TicketOut)
@@ -188,7 +208,15 @@ def get_ticket_detail(ticket_id: uuid.UUID, user: User = Depends(get_current_use
         ).scalars()
     )
 
-    return TicketDetailOut(ticket=ticket, messages=messages, suggestion=suggestion, attachments=attachments)
+    related_activity = related_activity_for(db, ticket)
+
+    return TicketDetailOut(
+        ticket=ticket,
+        messages=messages,
+        suggestion=suggestion,
+        attachments=attachments,
+        related_activity=related_activity,
+    )
 
 
 @router.patch("/{ticket_id}", response_model=TicketOut)

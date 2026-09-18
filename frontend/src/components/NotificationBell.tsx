@@ -5,19 +5,22 @@ import { api } from "@/lib/api";
 import { useAuth, type Role } from "@/lib/auth";
 import type { Notification, NotificationType } from "@/lib/types";
 
-const MESSAGES: Record<NotificationType, (title: string, viewerRole?: Role) => string> = {
-  ticket_updated: (t) => `Your ticket "${t}" was updated.`,
-  ticket_replied: (t) => `Admin replied on "${t}".`,
-  ticket_resolved: (t) => `"${t}" was confirmed resolved.`,
-  resolution_confirm_needed: (t) => `"${t}" was marked resolved — please confirm.`,
-  new_critical_ticket: (t) => `New critical ticket: "${t}".`,
-  staff_replied: (t) => `Staff replied on "${t}".`,
-  suggestion_failed: (t) => `AI couldn't analyze "${t}".`,
-  sla_risk: (t) => `"${t}" is at risk of breaching its SLA.`,
-  ticket_escalated: (t, viewerRole) =>
+const MESSAGES: Record<NotificationType, (n: Notification, viewerRole?: Role) => string> = {
+  ticket_updated: (n) => `Your ticket "${n.ticket_title ?? "a ticket"}" was updated.`,
+  ticket_replied: (n) => `Admin replied on "${n.ticket_title ?? "a ticket"}".`,
+  ticket_resolved: (n) => `"${n.ticket_title ?? "a ticket"}" was confirmed resolved.`,
+  resolution_confirm_needed: (n) => `"${n.ticket_title ?? "a ticket"}" was marked resolved — please confirm.`,
+  new_critical_ticket: (n) => `New critical ticket: "${n.ticket_title ?? "a ticket"}".`,
+  staff_replied: (n) => `Staff replied on "${n.ticket_title ?? "a ticket"}".`,
+  suggestion_failed: (n) => `AI couldn't analyze "${n.ticket_title ?? "a ticket"}".`,
+  sla_risk: (n) => `"${n.ticket_title ?? "a ticket"}" is at risk of breaching its SLA.`,
+  ticket_escalated: (n, viewerRole) =>
     viewerRole === "admin"
-      ? `🔴 Ticket escalated — "${t}" needs another admin's attention.`
-      : `Your ticket "${t}" has been escalated to another administrator for further investigation.`,
+      ? `🔴 Ticket escalated — "${n.ticket_title ?? "a ticket"}" needs another admin's attention.`
+      : `Your ticket "${n.ticket_title ?? "a ticket"}" has been escalated to another administrator for further investigation.`,
+  // Broadcast alert with no ticket of its own (see services/issues.start_incident) —
+  // the message is the incident status text an admin wrote, not a templated line.
+  incident_alert: (n) => `🔶 ${n.message ?? "A known incident affecting multiple people was reported."}`,
 };
 
 function timeAgo(iso: string): string {
@@ -120,7 +123,7 @@ export function NotificationBell() {
                 <div className="flex items-start gap-2">
                   {!n.is_read && <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />}
                   <div className={n.is_read ? "ml-3.5" : ""}>
-                    <p>{MESSAGES[n.type](n.ticket_title ?? "a ticket", profile?.role)}</p>
+                    <p>{MESSAGES[n.type](n, profile?.role)}</p>
                     <p className="mt-0.5 text-xs text-neutral-400">{timeAgo(n.created_at)}</p>
                   </div>
                 </div>

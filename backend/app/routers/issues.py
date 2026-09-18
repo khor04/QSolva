@@ -10,6 +10,8 @@ from app.deps import require_admin
 from app.models import Feedback, IssueCluster, Ticket, User
 from app.schemas import (
     ArticleEdit,
+    IncidentResolve,
+    IncidentStart,
     IssueClusterDetail,
     IssueClusterSummary,
     IssueRelatedTicket,
@@ -18,7 +20,7 @@ from app.schemas import (
     KbArticle,
     ResolutionEvidenceCounts,
 )
-from app.services.issues import gather_evidence
+from app.services.issues import gather_evidence, resolve_incident, start_incident
 
 router = APIRouter(prefix="/issues", tags=["issues"])
 
@@ -74,6 +76,9 @@ def _to_summary(db: Session, cluster: IssueCluster) -> IssueClusterSummary:
         pct_change=pct,
         severity=_severity(this_week, pct),
         article_status=cluster.article_status,
+        incident_status=cluster.incident_status,
+        incident_message=cluster.incident_message,
+        incident_updated_at=cluster.incident_updated_at,
     )
 
 
@@ -198,5 +203,44 @@ def edit_article(
     if cluster.article_status is None:
         cluster.article_status = "draft"
     db.commit()
+    db.refresh(cluster)
+    return _build_detail(db, cluster)
+
+
+@router.post("/{cluster_id}/incident/start", response_model=IssueClusterDetail)
+def start_cluster_incident(
+    cluster_id: uuid.UUID,
+    payload: IncidentStart,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Declares this cluster an active incident (or updates its status
+    message if already active), notifying every staff member with a
+    still-open ticket in it — so "12 others reported this" on their ticket
+    becomes "IT is aware, here's the status" instead."""
+    cluster = _get_cluster_or_404(db, cluster_id)
+    if not payload.message.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incident message can't be empty")
+    start_incident(db, cluster, payload.message.strip(), admin, notify_all_staff=payload.notify_all_staff)
+    db.refresh(cluster)
+    return _build_detail(db, cluster)
+
+
+@router.post("/{cluster_id}/incident/resolve", response_model=IssueClusterDetail)
+def resolve_cluster_incident(
+    cluster_id: uuid.UUID,
+    payload: IncidentResolve,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Bulk-resolves every still-open ticket in the cluster with one shared
+    reply, instead of the admin retyping the same resolution into each
+    ticket individually."""
+    cluster = _get_cluster_or_404(db, cluster_id)
+    if cluster.incident_status != "active":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No active incident to resolve")
+    if not payload.resolution_text.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Resolution text can't be empty")
+    resolve_incident(db, cluster, payload.resolution_text.strip(), admin)
     db.refresh(cluster)
     return _build_detail(db, cluster)

@@ -5,6 +5,170 @@ import { api } from "@/lib/api";
 import type { IssueClusterDetail, IssueSeverity } from "@/lib/types";
 import { StatusBadge } from "@/components/Badge";
 
+function IncidentPanel({ data, clusterId }: { data: IssueClusterDetail; clusterId: string }) {
+  const queryClient = useQueryClient();
+  const [starting, setStarting] = useState(false);
+  const [resolving, setResolving] = useState(false);
+  const [message, setMessage] = useState(data.incident_message ?? "");
+  const [notifyAllStaff, setNotifyAllStaff] = useState(false);
+  const [resolutionText, setResolutionText] = useState("");
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["issues", clusterId] });
+  const startIncident = useMutation({
+    mutationFn: () => api.post(`/issues/${clusterId}/incident/start`, { message, notify_all_staff: notifyAllStaff }),
+    onSuccess: () => {
+      setStarting(false);
+      invalidate();
+    },
+  });
+  const resolveIncident = useMutation({
+    mutationFn: () => api.post(`/issues/${clusterId}/incident/resolve`, { resolution_text: resolutionText }),
+    onSuccess: () => {
+      setResolving(false);
+      setResolutionText("");
+      invalidate();
+    },
+  });
+
+  const isActive = data.incident_status === "active";
+
+  return (
+    <div className="mb-6 rounded-lg border border-border-warm bg-white p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-medium text-neutral-500">Incident Status</h2>
+        {isActive && (
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+            🔶 Active incident
+          </span>
+        )}
+      </div>
+
+      {isActive && !resolving && (
+        <div>
+          <p className="mb-1 text-xs text-neutral-500">Status message shown on every affected ticket</p>
+          <p className="mb-4 whitespace-pre-wrap rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            {data.incident_message}
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                setMessage(data.incident_message ?? "");
+                setStarting(true);
+              }}
+              className="rounded-md border border-border-warm px-3 py-1.5 text-sm hover:bg-primary-light/20"
+            >
+              Update message
+            </button>
+            <button
+              onClick={() => setResolving(true)}
+              className="rounded-md bg-green-600 px-3 py-1.5 text-sm text-white hover:bg-green-700"
+            >
+              Resolve incident for everyone
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isActive && resolving && (
+        <div className="rounded-md border border-primary-light/50 bg-primary-light/10 p-3">
+          <p className="mb-2 text-sm">
+            This will reply with the resolution to every still-open ticket in this cluster and mark
+            them resolved, pending staff confirmation.
+          </p>
+          <textarea
+            value={resolutionText}
+            onChange={(e) => setResolutionText(e.target.value)}
+            placeholder="e.g. VPN gateway is back up — please reconnect and let us know if it's still failing."
+            rows={3}
+            className="mb-3 w-full rounded-md border border-border-warm px-3 py-2 text-sm"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={() => resolveIncident.mutate()}
+              disabled={resolveIncident.isPending || !resolutionText.trim()}
+              className="rounded-md bg-primary px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            >
+              {resolveIncident.isPending ? "Resolving..." : "Resolve all affected tickets"}
+            </button>
+            <button
+              onClick={() => setResolving(false)}
+              disabled={resolveIncident.isPending}
+              className="rounded-md border border-border-warm px-3 py-1.5 text-sm hover:bg-primary-light/20 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!isActive && !starting && (
+        <div>
+          <p className="mb-3 text-sm text-neutral-400">
+            No active incident. Declaring one shows a status message on every open ticket in this
+            cluster, so reporters know it's already known and being worked on.
+          </p>
+          <button
+            onClick={() => {
+              setMessage("");
+              setStarting(true);
+            }}
+            className="rounded-md border border-border-warm px-3 py-1.5 text-sm hover:bg-primary-light/20"
+          >
+            Mark as active incident
+          </button>
+        </div>
+      )}
+
+      {starting && (
+        <div className="rounded-md border border-primary-light/50 bg-primary-light/10 p-3">
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder="e.g. VPN gateway is down. Investigating — updates to follow."
+            rows={3}
+            className="mb-3 w-full rounded-md border border-border-warm px-3 py-2 text-sm"
+          />
+          {!isActive && (
+            <label className="mb-3 flex items-start gap-2 text-sm text-neutral-700">
+              <input
+                type="checkbox"
+                checked={notifyAllStaff}
+                onChange={(e) => setNotifyAllStaff(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                Notify all staff, not just those who've already filed a ticket — use this for something
+                like a VPN or network outage that affects people who haven't reported it yet.
+              </span>
+            </label>
+          )}
+          {isActive && (
+            <p className="mb-3 text-xs text-neutral-500">
+              Updating the message won't re-notify anyone — it only re-notifies on the first declaration.
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={() => startIncident.mutate()}
+              disabled={startIncident.isPending || !message.trim()}
+              className="rounded-md bg-primary px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            >
+              {startIncident.isPending ? "Saving..." : isActive ? "Update message" : "Declare incident"}
+            </button>
+            <button
+              onClick={() => setStarting(false)}
+              disabled={startIncident.isPending}
+              className="rounded-md border border-border-warm px-3 py-1.5 text-sm hover:bg-primary-light/20 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const SEVERITY_ICON: Record<IssueSeverity, string> = {
   emerging: "🔴",
   elevated: "🟠",
@@ -103,6 +267,8 @@ export function IssueDetail() {
           {SEVERITY_ICON[data.severity]} {data.label}
         </h1>
       </div>
+
+      <IncidentPanel data={data} clusterId={id!} />
 
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <div className="rounded-lg border border-border-warm bg-white p-4">
