@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
 
@@ -16,6 +16,7 @@ from app.schemas import (
     FeedbackCreate,
     MessageCreate,
     MessageOut,
+    TicketCategory,
     TicketCreate,
     TicketDetailOut,
     TicketOut,
@@ -174,12 +175,30 @@ def list_my_tickets(user: User = Depends(get_current_user), db: Session = Depend
 
 
 @router.get("/queue", response_model=list[TicketOut])
-def list_queue(_admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+def list_queue(
+    q: str | None = Query(None, max_length=200),
+    category: TicketCategory | None = None,
+    # created_after is inclusive, created_before exclusive, so the client can
+    # express "the whole of <day>" as [local midnight, next local midnight)
+    # without this endpoint needing to know the viewer's timezone.
+    created_after: datetime | None = None,
+    created_before: datetime | None = None,
+    _admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     stmt = (
         select(Ticket)
         .order_by(Ticket.priority.desc(), Ticket.created_at.asc())
         .options(selectinload(Ticket.assigned_admin), selectinload(Ticket.escalated_by_admin))
     )
+    if q and q.strip():
+        stmt = stmt.where(ticket_service.text_search_clause(q))
+    if category is not None:
+        stmt = stmt.where(Ticket.category == category)
+    if created_after is not None:
+        stmt = stmt.where(Ticket.created_at >= created_after)
+    if created_before is not None:
+        stmt = stmt.where(Ticket.created_at < created_before)
     return list(db.execute(stmt).scalars())
 
 

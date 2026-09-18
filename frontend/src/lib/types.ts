@@ -1,6 +1,7 @@
 export type TicketStatus = "open" | "in_progress" | "escalated" | "resolved" | "closed";
 export type TicketPriority = "low" | "medium" | "high" | "critical";
 export type TicketCategory = "network" | "hardware" | "software" | "email_account" | "access" | "other";
+export const TICKET_CATEGORIES: TicketCategory[] = ["network", "hardware", "software", "email_account", "access", "other"];
 export type AiSuggestionState = "available" | "accepted" | "rejected" | "not_applicable";
 export type PrioritySource = "ai" | "manual";
 export type AiPriorityStatus = "pending" | "success" | "failed";

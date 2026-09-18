@@ -6,12 +6,12 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import AiSuggestion, Ticket, TicketEmbedding
+from app.models import AiSuggestion, Ticket, TicketEmbedding, TicketMessage, User
 from app.services import ai
 from app.services import issues as issue_clustering
 from app.services.notifications import notify, notify_admins
@@ -31,6 +31,55 @@ MIN_SUGGESTION_CONFIDENCE = 0.4
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+MAX_SEARCH_TERMS = 8
+
+
+def _like_pattern(term: str) -> str:
+    # Escape LIKE wildcards so a search for "100%" or "a_b" matches literally.
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def text_search_clause(query: str):
+    """Every whitespace-separated term must appear somewhere in the ticket's
+    title, description, an admin reply, or an accepted AI suggestion (the
+    same two places services/issues.resolution_text_for reads a resolution
+    from). Terms are ANDed rather than treated as one phrase, so "vpn
+    timeout" still finds a ticket that says "timeout ... on the VPN"."""
+    terms = query.split()[:MAX_SEARCH_TERMS]
+    clauses = []
+    for term in terms:
+        pattern = _like_pattern(term)
+        admin_reply = (
+            select(TicketMessage.id)
+            .join(User, User.id == TicketMessage.sender_id)
+            .where(
+                TicketMessage.ticket_id == Ticket.id,
+                User.role == "admin",
+                TicketMessage.body.ilike(pattern, escape="\\"),
+            )
+            .exists()
+        )
+        accepted_suggestion = (
+            select(AiSuggestion.id)
+            .where(
+                AiSuggestion.ticket_id == Ticket.id,
+                AiSuggestion.state == "accepted",
+                AiSuggestion.resolution_text.ilike(pattern, escape="\\"),
+            )
+            .exists()
+        )
+        clauses.append(
+            or_(
+                Ticket.title.ilike(pattern, escape="\\"),
+                Ticket.description.ilike(pattern, escape="\\"),
+                admin_reply,
+                accepted_suggestion,
+            )
+        )
+    return and_(*clauses)
 
 
 async def process_new_ticket(ticket_id: uuid.UUID) -> None:

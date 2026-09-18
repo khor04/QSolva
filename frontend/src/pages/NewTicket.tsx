@@ -4,9 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { uploadTicketAttachment } from "@/lib/storage";
 import { AttachmentPicker } from "@/components/AttachmentPicker";
-import type { ActiveIncidentMatch, Ticket, TicketCategory } from "@/lib/types";
-
-const categories: TicketCategory[] = ["network", "hardware", "software", "email_account", "access", "other"];
+import { TICKET_CATEGORIES as categories, type ActiveIncidentMatch, type Ticket, type TicketCategory } from "@/lib/types";
 
 export function NewTicket() {
   const navigate = useNavigate();

@@ -1,10 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { usePagination } from "@/lib/usePagination";
-import type { Ticket, TicketPriority } from "@/lib/types";
+import { TICKET_CATEGORIES, type Ticket, type TicketCategory, type TicketPriority } from "@/lib/types";
 import { StatusBadge, PriorityBadge } from "@/components/Badge";
 import { PaginationControls } from "@/components/PaginationControls";
 
@@ -35,6 +35,20 @@ function sortQueue(tickets: Ticket[]): Ticket[] {
     if (priorityDiff !== 0) return priorityDiff;
     return new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime();
   });
+}
+
+const SEARCH_DEBOUNCE_MS = 300;
+
+// The date inputs give "YYYY-MM-DD" in the admin's local calendar; convert to
+// local-midnight instants so "Mar 1 – Mar 31" means their March, not UTC's.
+function startOfLocalDay(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(y, m - 1, d).toISOString();
+}
+
+function startOfNextLocalDay(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(y, m - 1, d + 1).toISOString();
 }
 
 function QueueTable({ tickets, currentAdminId }: { tickets: Ticket[]; currentAdminId?: string }) {
@@ -150,11 +164,34 @@ export function AdminQueue() {
   const { profile } = useAuth();
   const [activeFilters, setActiveFilters] = useState<Set<Filter>>(new Set());
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [category, setCategory] = useState<TicketCategory | "">("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Search, category and date range are applied by the API (search covers
+  // descriptions and resolutions, which aren't in the list payload); the
+  // status chips below stay client-side since they're instant on loaded data.
   const { data, isLoading, error } = useQuery({
-    queryKey: ["tickets", "queue"],
-    queryFn: () => api.get<Ticket[]>("/tickets/queue"),
+    queryKey: ["tickets", "queue", { q: debouncedSearch, category, dateFrom, dateTo }],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (debouncedSearch) params.set("q", debouncedSearch);
+      if (category) params.set("category", category);
+      if (dateFrom) params.set("created_after", startOfLocalDay(dateFrom));
+      if (dateTo) params.set("created_before", startOfNextLocalDay(dateTo));
+      const qs = params.toString();
+      return api.get<Ticket[]>(`/tickets/queue${qs ? `?${qs}` : ""}`);
+    },
+    placeholderData: keepPreviousData,
   });
+
+  const hasSearchFilters = search !== "" || category !== "" || dateFrom !== "" || dateTo !== "";
 
   const matchesFilters = (t: Ticket) => {
     if (activeFilters.size === 0) return true;
@@ -168,10 +205,9 @@ export function AdminQueue() {
   };
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return (data ?? []).filter((t) => matchesFilters(t) && (q === "" || t.title.toLowerCase().includes(q)));
+    return (data ?? []).filter(matchesFilters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, activeFilters, search, profile?.id]);
+  }, [data, activeFilters, profile?.id]);
 
   const active = sortQueue(filtered.filter((t) => t.status !== "closed" && t.status !== "resolved"));
   const awaitingConfirmation = filtered.filter((t) => t.status === "resolved");
@@ -181,10 +217,23 @@ export function AdminQueue() {
   const awaitingPage = usePagination(awaitingConfirmation, PAGE_SIZE);
   const historyPage = usePagination(history, PAGE_SIZE);
 
-  function toggleFilter(f: Filter) {
+  function resetPages() {
     activePage.setPage(1);
     awaitingPage.setPage(1);
     historyPage.setPage(1);
+  }
+
+  function clearSearchFilters() {
+    setSearch("");
+    setDebouncedSearch("");
+    setCategory("");
+    setDateFrom("");
+    setDateTo("");
+    resetPages();
+  }
+
+  function toggleFilter(f: Filter) {
+    resetPages();
     setActiveFilters((prev) => {
       const next = new Set(prev);
       if (next.has(f)) next.delete(f);
@@ -202,13 +251,59 @@ export function AdminQueue() {
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
-            activePage.setPage(1);
-            awaitingPage.setPage(1);
-            historyPage.setPage(1);
+            resetPages();
           }}
-          placeholder="Search tickets by title..."
-          className="w-full max-w-xs rounded-md border border-border-warm px-3 py-1.5 text-sm sm:w-64"
+          placeholder="Search title, description, resolution..."
+          aria-label="Search tickets"
+          className="w-full max-w-xs rounded-md border border-border-warm px-3 py-1.5 text-sm sm:w-72"
         />
+        <select
+          value={category}
+          onChange={(e) => {
+            setCategory(e.target.value as TicketCategory | "");
+            resetPages();
+          }}
+          aria-label="Category"
+          className="rounded-md border border-border-warm px-3 py-1.5 text-sm capitalize"
+        >
+          <option value="">All categories</option>
+          {TICKET_CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {c.replace("_", " ")}
+            </option>
+          ))}
+        </select>
+        <label className="flex items-center gap-1.5 text-sm text-neutral-500">
+          From
+          <input
+            type="date"
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(e) => {
+              setDateFrom(e.target.value);
+              resetPages();
+            }}
+            className="rounded-md border border-border-warm px-2 py-1 text-sm text-neutral-800"
+          />
+        </label>
+        <label className="flex items-center gap-1.5 text-sm text-neutral-500">
+          To
+          <input
+            type="date"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(e) => {
+              setDateTo(e.target.value);
+              resetPages();
+            }}
+            className="rounded-md border border-border-warm px-2 py-1 text-sm text-neutral-800"
+          />
+        </label>
+        {hasSearchFilters && (
+          <button onClick={clearSearchFilters} className="text-sm text-primary-dark hover:underline">
+            Clear
+          </button>
+        )}
         <div className="flex gap-2 text-sm">
           {FILTERS.map((f) => (
             <button
