@@ -13,6 +13,7 @@ from app.schemas import (
     ActiveIncidentMatch,
     AttachmentCreate,
     AttachmentOut,
+    EscalateRequest,
     FeedbackCreate,
     MessageCreate,
     MessageOut,
@@ -235,6 +236,7 @@ def get_ticket_detail(ticket_id: uuid.UUID, user: User = Depends(get_current_use
         suggestion=suggestion,
         attachments=attachments,
         related_activity=related_activity,
+        escalation_reason=ticket.escalation_reason if user.role == "admin" else None,
     )
 
 
@@ -337,22 +339,41 @@ def add_attachment(
 def claim_ticket(ticket_id: uuid.UUID, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     ticket = _get_ticket_or_404(db, ticket_id)
     _ensure_not_done(ticket)
+    if ticket.assigned_admin_id == admin.id:
+        return ticket
+    if ticket.assigned_admin_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Already assigned to {ticket.assigned_admin_name or 'another admin'}",
+        )
     ticket_service.claim_ticket(db, ticket, admin.id)
     db.refresh(ticket)
     return ticket
 
 
 @router.post("/{ticket_id}/unassign", response_model=TicketOut)
-def unassign_ticket(ticket_id: uuid.UUID, _admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+def unassign_ticket(ticket_id: uuid.UUID, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     ticket = _get_ticket_or_404(db, ticket_id)
     _ensure_not_done(ticket)
+    # Otherwise any admin could unassign someone else's ticket and then
+    # claim it, sidestepping the claim guard.
+    if ticket.assigned_admin_id != admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only the assigned admin can unassign this ticket",
+        )
     ticket_service.unassign_ticket(db, ticket)
     db.refresh(ticket)
     return ticket
 
 
 @router.post("/{ticket_id}/escalate", response_model=TicketOut)
-def escalate_ticket(ticket_id: uuid.UUID, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+def escalate_ticket(
+    ticket_id: uuid.UUID,
+    payload: EscalateRequest | None = None,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     ticket = _get_ticket_or_404(db, ticket_id)
     _ensure_not_done(ticket)
     if ticket.assigned_admin_id != admin.id:
@@ -360,7 +381,20 @@ def escalate_ticket(ticket_id: uuid.UUID, admin: User = Depends(require_admin), 
             status_code=status.HTTP_409_CONFLICT,
             detail="Only the assigned admin can escalate this ticket",
         )
-    ticket_service.escalate_ticket(db, ticket, admin.id)
+    payload = payload or EscalateRequest()
+    if payload.target_admin_id is not None:
+        target = db.get(User, payload.target_admin_id)
+        if target is None or target.role != "admin" or target.deleted_at is not None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Target must be an active admin")
+        if target.id == admin.id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Can't hand a ticket to yourself")
+    ticket_service.escalate_ticket(
+        db,
+        ticket,
+        admin.id,
+        reason=(payload.reason or "").strip() or None,
+        target_admin_id=payload.target_admin_id,
+    )
     db.refresh(ticket)
     return ticket
 

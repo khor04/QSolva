@@ -15,18 +15,23 @@ interface AuthContextValue {
   session: Session | null;
   profile: Profile | null;
   loading: boolean;
+  // Set when a valid Supabase session had no usable profile row, so the
+  // login page can explain why the user was signed back out.
+  profileError: string | null;
 }
 
 const AuthContext = createContext<AuthContextValue>({
   session: null,
   profile: null,
   loading: true,
+  profileError: null,
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profileError, setProfileError] = useState<string | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -56,14 +61,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .from("users")
       .select("id, name, email, role")
       .eq("id", userId)
-      .single()
+      .maybeSingle()
       .then(({ data, error }) => {
         if (cancelled) return;
-        if (error) {
-          console.error("Failed to load profile", error);
+        if (error || !data) {
+          if (error) console.error("Failed to load profile", error);
+          // A session with no profile can't use the app, and leaving it
+          // signed in makes /login and ProtectedRoute redirect to each other
+          // forever — so end the session and say why.
           setProfile(null);
+          setProfileError(
+            "Your account has no profile yet, so you were signed out. Please contact an administrator.",
+          );
+          supabase.auth.signOut();
         } else {
           setProfile(data as Profile);
+          setProfileError(null);
         }
         setLoading(false);
       });
@@ -80,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [userId]);
 
   return (
-    <AuthContext.Provider value={{ session, profile, loading }}>
+    <AuthContext.Provider value={{ session, profile, loading, profileError }}>
       {children}
     </AuthContext.Provider>
   );

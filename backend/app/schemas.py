@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 TicketStatus = Literal["open", "in_progress", "escalated", "resolved", "closed"]
 TicketPriority = Literal["low", "medium", "high", "critical"]
@@ -66,6 +66,12 @@ class MessageCreate(BaseModel):
     body: str
 
 
+class EscalateRequest(BaseModel):
+    reason: str | None = Field(None, max_length=1000)
+    # None = release back to the queue; set = hand off straight to that admin.
+    target_admin_id: uuid.UUID | None = None
+
+
 class MessageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -127,6 +133,8 @@ class TicketDetailOut(BaseModel):
     # None when there's nothing worth surfacing yet — see
     # services/issues.related_activity_for.
     related_activity: RelatedActivityOut | None = None
+    # Admin-only: always None for the staff member who filed the ticket.
+    escalation_reason: str | None = None
 
 
 class FeedbackCreate(BaseModel):
@@ -245,6 +253,14 @@ class AdminInviteCodeOut(BaseModel):
     code: str
     expires_at: datetime | None
     max_uses: int
+
+
+class AdminWorkload(BaseModel):
+    id: uuid.UUID
+    name: str
+    active_tickets: int
+    high_critical_tickets: int
+    overdue_tickets: int
 
 
 class PriorityDistribution(BaseModel):

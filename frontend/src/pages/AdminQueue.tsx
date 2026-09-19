@@ -7,6 +7,7 @@ import { usePagination } from "@/lib/usePagination";
 import { TICKET_CATEGORIES, type Ticket, type TicketCategory, type TicketPriority } from "@/lib/types";
 import { StatusBadge, PriorityBadge } from "@/components/Badge";
 import { PaginationControls } from "@/components/PaginationControls";
+import { TeamWorkload } from "@/components/TeamWorkload";
 
 type Filter = "open" | "unassigned" | "mine" | "critical";
 const FILTERS: Filter[] = ["open", "unassigned", "mine", "critical"];
@@ -245,6 +246,8 @@ export function AdminQueue() {
   return (
     <div>
       <h1 className="mb-4 text-xl font-semibold">Ticket Queue</h1>
+
+      <TeamWorkload />
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <input

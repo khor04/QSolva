@@ -5,13 +5,15 @@ import { useAuth } from "@/lib/auth";
 import { PasswordInput } from "@/components/PasswordInput";
 
 export function Login() {
-  const { session } = useAuth();
+  const { session, profile, profileError } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  if (session) return <Navigate to="/" replace />;
+  // Needs the profile too: ProtectedRoute bounces a profile-less session back
+  // here, so redirecting on the session alone would loop.
+  if (session && profile) return <Navigate to="/" replace />;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -47,7 +49,7 @@ export function Login() {
         <p className="mb-4 text-right text-sm">
           <Link to="/forgot-password" className="text-primary-dark underline">Forgot password?</Link>
         </p>
-        {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
+        {(error ?? profileError) && <p className="mb-4 text-sm text-red-600">{error ?? profileError}</p>}
         <button
           type="submit"
           disabled={loading}

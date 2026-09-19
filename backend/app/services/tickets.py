@@ -255,6 +255,7 @@ def claim_ticket(db: Session, ticket: Ticket, admin_id: uuid.UUID) -> None:
     ticket.status = "in_progress"
     # Whoever escalated it is no longer relevant once someone takes ownership.
     ticket.escalated_by_admin_id = None
+    ticket.escalation_reason = None
     ticket.updated_at = _now()
     db.commit()
 
@@ -262,21 +263,37 @@ def claim_ticket(db: Session, ticket: Ticket, admin_id: uuid.UUID) -> None:
 def unassign_ticket(db: Session, ticket: Ticket) -> None:
     ticket.assigned_admin_id = None
     ticket.escalated_by_admin_id = None
+    ticket.escalation_reason = None
     ticket.status = "open"
     ticket.updated_at = _now()
     db.commit()
 
 
-def escalate_ticket(db: Session, ticket: Ticket, escalating_admin_id: uuid.UUID) -> None:
+def escalate_ticket(
+    db: Session,
+    ticket: Ticket,
+    escalating_admin_id: uuid.UUID,
+    reason: str | None = None,
+    target_admin_id: uuid.UUID | None = None,
+) -> None:
     """Escalation here means "I can't resolve this myself" rather than a
-    move to a higher support tier (there is none) — it releases the ticket
-    back to the queue, unassigned, for a different admin to pick up."""
-    ticket.assigned_admin_id = None
+    move to a higher support tier (there is none). With a target it hands
+    the ticket straight to that admin; without one it releases it back to
+    the queue, unassigned, for whichever admin picks it up."""
     ticket.escalated_by_admin_id = escalating_admin_id
-    ticket.status = "escalated"
+    ticket.escalation_reason = reason
     ticket.updated_at = _now()
-    notify_admins(db, "ticket_escalated", ticket.id, exclude_user_id=escalating_admin_id)
-    notify(db, ticket.staff_id, "ticket_escalated", ticket.id)
+    if target_admin_id is not None:
+        # An internal reshuffle between admins: the ticket is still being
+        # worked on, so staff isn't told it's been "escalated".
+        ticket.assigned_admin_id = target_admin_id
+        ticket.status = "in_progress"
+        notify(db, target_admin_id, "ticket_escalated", ticket.id)
+    else:
+        ticket.assigned_admin_id = None
+        ticket.status = "escalated"
+        notify_admins(db, "ticket_escalated", ticket.id, exclude_user_id=escalating_admin_id)
+        notify(db, ticket.staff_id, "ticket_escalated", ticket.id)
     db.commit()
 
 

@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { FeedbackOutcome, TicketDetailResponse, TicketPriority, TicketStatus } from "@/lib/types";
+import type { AdminWorkload, FeedbackOutcome, TicketDetailResponse, TicketPriority, TicketStatus } from "@/lib/types";
 
 const NEGATIVE_OUTCOMES: { value: FeedbackOutcome; label: string }[] = [
   { value: "partially_solved", label: "Partially solved" },
@@ -75,6 +75,13 @@ const PRIORITY_MESSAGES: Record<TicketPriority, string> = {
 };
 
 const PRIORITY_OPTIONS: TicketPriority[] = ["low", "medium", "high", "critical"];
+
+const ESCALATE_REASONS = [
+  "I need another admin's expertise",
+  "I need another admin's assistance",
+  "I am overloaded",
+  "Other",
+];
 import { StatusBadge, PriorityBadge } from "@/components/Badge";
 
 export function TicketDetail() {
@@ -85,6 +92,9 @@ export function TicketDetail() {
   const [reply, setReply] = useState("");
   const [confirmingSolved, setConfirmingSolved] = useState(false);
   const [confirmingEscalate, setConfirmingEscalate] = useState(false);
+  const [escalateReason, setEscalateReason] = useState(ESCALATE_REASONS[0]);
+  const [escalateDetails, setEscalateDetails] = useState("");
+  const [handoffTarget, setHandoffTarget] = useState("");
   const [confirmingSelfResolve, setConfirmingSelfResolve] = useState(false);
   const [showResolvedFeedbackForm, setShowResolvedFeedbackForm] = useState(false);
   const [showSuggestionFeedbackForm, setShowSuggestionFeedbackForm] = useState(false);
@@ -120,14 +130,34 @@ export function TicketDetail() {
     },
   });
 
-  const claim = useMutation({ mutationFn: () => api.post(`/tickets/${id}/claim`), onSuccess: invalidate });
+  // onError refreshes too: a 409 means someone else claimed it while this
+  // page was open, so reload to show the real owner.
+  const claim = useMutation({
+    mutationFn: () => api.post(`/tickets/${id}/claim`),
+    onSuccess: invalidate,
+    onError: invalidate,
+  });
   const unassign = useMutation({ mutationFn: () => api.post(`/tickets/${id}/unassign`), onSuccess: invalidate });
   const escalate = useMutation({
-    mutationFn: () => api.post(`/tickets/${id}/escalate`),
+    // null target = release back to the queue instead of handing off.
+    mutationFn: (targetAdminId: string | null) =>
+      api.post(`/tickets/${id}/escalate`, {
+        reason: [escalateReason, escalateDetails.trim()].filter(Boolean).join(" — ") || null,
+        target_admin_id: targetAdminId,
+      }),
     onSuccess: () => {
       setConfirmingEscalate(false);
+      setHandoffTarget("");
+      setEscalateDetails("");
       invalidate();
     },
+  });
+
+  // Only needed for the handoff picker, so don't fetch it until the dialog opens.
+  const { data: workload } = useQuery({
+    queryKey: ["admin", "workload"],
+    queryFn: () => api.get<AdminWorkload[]>("/admin/workload"),
+    enabled: isAdmin && confirmingEscalate,
   });
   const setStatus = useMutation({
     mutationFn: (status: TicketStatus) => api.patch(`/tickets/${id}`, { status }),
@@ -156,7 +186,7 @@ export function TicketDetail() {
   if (isLoading) return <p className="text-sm text-neutral-500">Loading...</p>;
   if (error || !data) return <p className="text-sm text-red-600">Failed to load ticket.</p>;
 
-  const { ticket, messages, suggestion, related_activity } = data;
+  const { ticket, messages, suggestion, related_activity, escalation_reason } = data;
   const isTicketDone = ticket.status === "resolved" || ticket.status === "closed";
   const analyzing = ticket.ai_priority_status === "pending" || ticket.ai_rag_status === "pending";
 
@@ -253,6 +283,19 @@ export function TicketDetail() {
                     ? "you"
                     : ticket.escalated_by_admin_name ?? "another admin"}{" "}
                   — back in the queue for another admin to take over.
+                  {escalation_reason && <span className="block">Reason: {escalation_reason}</span>}
+                </p>
+              )}
+              {ticket.assigned_admin_id === profile?.id && ticket.escalated_by_admin_id && (
+                <p className="mb-3 rounded-md bg-primary-light/20 px-3 py-2 text-sm text-neutral-700">
+                  Handed to you by {ticket.escalated_by_admin_name ?? "another admin"}.
+                  {escalation_reason && <span className="block">Reason: {escalation_reason}</span>}
+                </p>
+              )}
+
+              {claim.isError && (
+                <p className="mb-3 text-sm text-red-600">
+                  Couldn't claim this ticket — another admin may have just taken it.
                 </p>
               )}
 
@@ -263,7 +306,15 @@ export function TicketDetail() {
                       Claim
                     </button>
                   )}
-                  {ticket.assigned_admin_id && (
+                  {ticket.assigned_admin_id && ticket.assigned_admin_id !== profile?.id && (
+                    <button
+                      disabled
+                      className="rounded-md border border-border-warm px-3 py-1.5 text-sm text-neutral-400"
+                    >
+                      Assigned to {ticket.assigned_admin_name ?? "another admin"}
+                    </button>
+                  )}
+                  {ticket.assigned_admin_id === profile?.id && (
                     <button onClick={() => unassign.mutate()} className="rounded-md border border-border-warm px-3 py-1.5 text-sm hover:bg-primary-light/20">
                       Unassign
                     </button>
@@ -281,17 +332,75 @@ export function TicketDetail() {
 
               {confirmingEscalate && (
                 <div className="rounded-md border border-primary-light/50 bg-primary-light/10 p-3">
-                  <p className="mb-3 text-sm">
-                    Escalate this ticket? This will release it back to the admin queue so another
-                    administrator can take over.
+                  <p className="mb-1 text-sm font-medium">Escalate / Hand Off</p>
+                  <p className="mb-3 text-sm text-neutral-600">
+                    Choose another admin to hand this ticket to, or return it to the queue. The reason
+                    is only visible to admins.
                   </p>
-                  <div className="flex gap-2">
+
+                  <label className="mb-1 block text-sm text-neutral-600">Reason</label>
+                  <select
+                    value={escalateReason}
+                    onChange={(e) => setEscalateReason(e.target.value)}
+                    className="mb-2 w-full rounded-md border border-border-warm px-3 py-1.5 text-sm"
+                  >
+                    {ESCALATE_REASONS.map((r) => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                  </select>
+                  <textarea
+                    value={escalateDetails}
+                    onChange={(e) => setEscalateDetails(e.target.value)}
+                    placeholder="Additional details, e.g. what you already tried (optional)"
+                    rows={2}
+                    maxLength={800}
+                    className="mb-3 w-full rounded-md border border-border-warm px-3 py-2 text-sm"
+                  />
+
+                  <p className="mb-1 text-sm text-neutral-600">Hand off to</p>
+                  <div className="mb-3 space-y-1.5">
+                    {(workload ?? [])
+                      .filter((a) => a.id !== profile?.id)
+                      .map((a) => (
+                        <label key={a.id} className="flex items-start gap-2 text-sm">
+                          <input
+                            type="radio"
+                            name="handoff-target"
+                            checked={handoffTarget === a.id}
+                            onChange={() => setHandoffTarget(a.id)}
+                            className="mt-1"
+                          />
+                          <span>
+                            {a.name}
+                            <span className="block text-xs text-neutral-500">
+                              {a.active_tickets} active · {a.high_critical_tickets} high/critical ·{" "}
+                              {a.overdue_tickets} overdue
+                            </span>
+                          </span>
+                        </label>
+                      ))}
+                    {workload && workload.filter((a) => a.id !== profile?.id).length === 0 && (
+                      <p className="text-sm text-neutral-500">No other admins to hand off to.</p>
+                    )}
+                  </div>
+
+                  {escalate.isError && (
+                    <p className="mb-2 text-sm text-red-600">Couldn't escalate this ticket. Please try again.</p>
+                  )}
+                  <div className="flex flex-wrap gap-2">
                     <button
-                      onClick={() => escalate.mutate()}
-                      disabled={escalate.isPending}
+                      onClick={() => escalate.mutate(handoffTarget)}
+                      disabled={escalate.isPending || !handoffTarget}
                       className="rounded-md bg-primary px-3 py-1.5 text-sm text-white disabled:opacity-50"
                     >
-                      {escalate.isPending ? "Escalating..." : "Escalate Ticket"}
+                      {escalate.isPending ? "Escalating..." : "Escalate & Hand Off"}
+                    </button>
+                    <button
+                      onClick={() => escalate.mutate(null)}
+                      disabled={escalate.isPending}
+                      className="rounded-md border border-border-warm px-3 py-1.5 text-sm hover:bg-primary-light/20 disabled:opacity-50"
+                    >
+                      Return to Queue
                     </button>
                     <button
                       onClick={() => setConfirmingEscalate(false)}

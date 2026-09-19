@@ -3,12 +3,14 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import require_admin
-from app.models import AdminInviteCode, User
-from app.schemas import AdminInviteCodeCreate, AdminInviteCodeOut
+from app.models import AdminInviteCode, Ticket, User
+from app.schemas import AdminInviteCodeCreate, AdminInviteCodeOut, AdminWorkload
+from app.services.sla import SLA_THRESHOLD_DAYS
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -26,6 +28,40 @@ def _hash_code(code: str) -> str:
     # Must match the Postgres trigger's md5(text) exactly (see alembic 0008)
     # — same algorithm, same lowercase-hex encoding.
     return hashlib.md5(code.encode()).hexdigest()
+
+
+@router.get("/workload", response_model=list[AdminWorkload])
+def get_workload(_admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Per-admin load so someone deciding what to claim, or who to hand a
+    ticket to, can see who is carrying what. Outer join so an admin with
+    nothing assigned still shows up (as idle) rather than vanishing."""
+    overdue_cutoff = datetime.now(timezone.utc) - timedelta(days=SLA_THRESHOLD_DAYS)
+    rows = db.execute(
+        select(
+            User.id,
+            User.name,
+            func.count(Ticket.id),
+            func.count(Ticket.id).filter(Ticket.priority.in_(["high", "critical"])),
+            func.count(Ticket.id).filter(Ticket.created_at < overdue_cutoff),
+        )
+        .select_from(User)
+        .outerjoin(
+            Ticket,
+            and_(
+                Ticket.assigned_admin_id == User.id,
+                Ticket.status.in_(["open", "in_progress", "escalated"]),
+            ),
+        )
+        .where(User.role == "admin", User.deleted_at.is_(None))
+        .group_by(User.id, User.name)
+        .order_by(User.name)
+    ).all()
+    return [
+        AdminWorkload(
+            id=id_, name=name, active_tickets=active, high_critical_tickets=high, overdue_tickets=overdue
+        )
+        for id_, name, active, high, overdue in rows
+    ]
 
 
 @router.post("/invite-codes", response_model=AdminInviteCodeOut)

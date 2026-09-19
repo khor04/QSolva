@@ -8,6 +8,14 @@ export type AiPriorityStatus = "pending" | "success" | "failed";
 export type AiRagStatus = "pending" | "success" | "no_match" | "failed";
 export type FeedbackOutcome = "solved" | "partially_solved" | "did_not_solve" | "wrong_recommendation" | "other";
 
+export interface AdminWorkload {
+  id: string;
+  name: string;
+  active_tickets: number;
+  high_critical_tickets: number;
+  overdue_tickets: number;
+}
+
 export interface Ticket {
   id: string;
   staff_id: string;
@@ -79,6 +87,8 @@ export interface TicketDetailResponse {
   suggestion: AiSuggestion | null;
   attachments: TicketAttachment[];
   related_activity: RelatedActivity | null;
+  // Admin-only; always null for the staff member who filed the ticket.
+  escalation_reason: string | null;
 }
 
 export type NotificationType =

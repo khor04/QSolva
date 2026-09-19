@@ -71,6 +71,9 @@ class Ticket(Base):
     priority_confidence: Mapped[float | None] = mapped_column(Numeric, nullable=True)
     priority_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     priority_source: Mapped[str] = mapped_column(priority_source_enum, default="ai")
+    # Internal, admin-only note from whoever last escalated/handed this off.
+    # Deliberately not on TicketOut, which staff also receive.
+    escalation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Tracked independently of priority_confidence/AiSuggestion existence so a
     # failed stage can be retried without redoing one that already succeeded,
     # and so "no similar cases found" (no_match) is distinguishable in the UI
