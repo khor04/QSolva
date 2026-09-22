@@ -47,6 +47,11 @@ class TicketOut(BaseModel):
     assigned_admin_name: str | None
     escalated_by_admin_id: uuid.UUID | None
     escalated_by_admin_name: str | None
+    # None means not yet grouped into a recurring-issue cluster — used on the
+    # admin ticket view to decide whether "Escalate to new incident" applies
+    # (a ticket already in a cluster should use that cluster's own incident
+    # flow on the Issues page instead of creating a second, overlapping one).
+    cluster_id: uuid.UUID | None
     title: str
     description: str
     category: TicketCategory
@@ -229,7 +234,30 @@ class ActiveIncidentCheck(BaseModel):
 class ActiveIncidentMatch(BaseModel):
     cluster_id: uuid.UUID
     label: str
+    # A cluster can satisfy either or both — an active incident is the
+    # stronger signal, a published article means there's already a
+    # self-service answer. Both are admin-gated (see start_incident /
+    # publish_article), so it's safe to show a reporter either one; an
+    # unreviewed cluster never reaches this response regardless of size.
+    is_active_incident: bool
+    is_published_article: bool
     message: str | None
+    article_question: str | None = None
+    article_answer: str | None = None
+
+
+class NewIncidentCreate(BaseModel):
+    """Declares a brand-new incident with no existing recurring-issue
+    cluster behind it (e.g. IT knows about an outage before any ticket has
+    been filed). description seeds the cluster's embedding so future
+    tickets can still auto-join it, the same as an algorithmically-detected
+    cluster would."""
+
+    label: str
+    category: TicketCategory
+    description: str
+    message: str
+    notify_all_staff: bool = False
 
 
 class HelpCenterArticleSummary(BaseModel):

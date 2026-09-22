@@ -16,10 +16,10 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.models import AiSuggestion, Feedback, IssueCluster, Ticket, TicketMessage, User
+from app.models import AiSuggestion, Feedback, IssueCluster, Ticket, TicketEmbedding, TicketMessage, User
 from app.services import ai
 from app.services.notifications import all_staff_ids, notify
 
@@ -237,25 +237,28 @@ def resolve_incident(db: Session, cluster: IssueCluster, resolution_text: str, a
     return len(tickets)
 
 
-async def match_active_incident(db: Session, title: str, description: str) -> IssueCluster | None:
+_KNOWN_ISSUE_FILTER = or_(IssueCluster.incident_status == "active", IssueCluster.article_status == "published")
+
+
+async def match_known_issue(db: Session, title: str, description: str) -> IssueCluster | None:
     """Pre-submit check for the New Ticket form: does this draft match a
-    currently *active* incident, so the reporter can be told before they
-    file a duplicate of something already known. Deliberately scoped to
-    active incidents only (not "any similar past ticket" — that's already
-    covered post-submission by the RAG suggestion), so declaring zero
-    incidents — the common case — costs no extra embedding call on every
+    cluster an admin has already vetted for staff visibility — either a
+    declared active incident, or a published Help Center article. Both are
+    admin-gated (start_incident / routers/issues.publish_article), so
+    surfacing either is safe; an unreviewed cluster (however large) never
+    reaches this check regardless of member_count. Deliberately cheap (no AI
+    call at all) when neither exists yet — the common case — so declaring
+    zero incidents and publishing zero articles costs nothing extra on every
     single ticket submission."""
-    has_active_incident = db.execute(
-        select(IssueCluster.id).where(IssueCluster.incident_status == "active").limit(1)
-    ).first()
-    if has_active_incident is None:
+    has_candidate = db.execute(select(IssueCluster.id).where(_KNOWN_ISSUE_FILTER).limit(1)).first()
+    if has_candidate is None:
         return None
 
     embedding = await ai.embed_text(f"{title}\n{description}")
     distance = IssueCluster.centroid_embedding.cosine_distance(embedding)
     best = db.execute(
         select(IssueCluster, distance.label("distance"))
-        .where(IssueCluster.incident_status == "active")
+        .where(_KNOWN_ISSUE_FILTER)
         .order_by(distance)
         .limit(1)
     ).first()
@@ -264,6 +267,68 @@ async def match_active_incident(db: Session, title: str, description: str) -> Is
     cluster, dist = best
     if (1 - float(dist)) < SIMILARITY_THRESHOLD:
         return None
+    return cluster
+
+
+async def create_incident_from_scratch(
+    db: Session,
+    label: str,
+    category: str,
+    description: str,
+    message: str,
+    admin: User,
+    notify_all_staff: bool,
+) -> IssueCluster:
+    """Declares a brand-new incident with no recurring-issue cluster behind
+    it yet — e.g. IT knows about an outage from internal monitoring before
+    any ticket has been filed. Seeds the cluster's centroid from the admin's
+    own problem description so tickets that come in afterward can still
+    auto-join it via assign_cluster, the same as an algorithmically-detected
+    cluster would."""
+    embedding = await ai.embed_text(f"{label}\n{description}")
+    cluster = IssueCluster(
+        label=label,
+        category=category,
+        centroid_embedding=embedding,
+        member_count=0,
+        created_at=_now(),
+        updated_at=_now(),
+    )
+    db.add(cluster)
+    db.flush()
+    start_incident(db, cluster, message, admin, notify_all_staff=notify_all_staff)
+    return cluster
+
+
+def escalate_ticket_to_incident(
+    db: Session, ticket: Ticket, message: str, admin: User, notify_all_staff: bool
+) -> IssueCluster:
+    """Declares a new incident seeded from a single, not-yet-clustered
+    ticket — for when an admin spots a first report that's clearly going to
+    be widespread and doesn't want to wait for the automatic clustering
+    threshold (2+ similar tickets) before acting. Reuses the ticket's own
+    embedding (already computed by the RAG stage) rather than asking the
+    admin to redescribe the problem. Tickets already in a cluster should use
+    that cluster's own incident flow on the Issues page instead — raises
+    rather than silently pulling a ticket out of an existing cluster."""
+    if ticket.cluster_id is not None:
+        raise ValueError("Ticket is already part of a recurring-issue cluster")
+    embedding_row = db.get(TicketEmbedding, ticket.id)
+    if embedding_row is None:
+        raise ValueError("This ticket has no AI embedding yet — analysis may still be in progress")
+
+    cluster = IssueCluster(
+        label=ticket.title,
+        category=ticket.category,
+        centroid_embedding=embedding_row.embedding,
+        member_count=1,
+        created_at=_now(),
+        updated_at=_now(),
+    )
+    db.add(cluster)
+    db.flush()
+    ticket.cluster_id = cluster.id
+    start_incident(db, cluster, message, admin, notify_all_staff=notify_all_staff)
     return cluster
 
 

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -18,9 +18,16 @@ from app.schemas import (
     IssueSeverity,
     IssueTimelinePoint,
     KbArticle,
+    NewIncidentCreate,
     ResolutionEvidenceCounts,
 )
-from app.services.issues import gather_evidence, resolve_incident, start_incident
+from app.services.issues import (
+    create_incident_from_scratch,
+    escalate_ticket_to_incident,
+    gather_evidence,
+    resolve_incident,
+    start_incident,
+)
 
 router = APIRouter(prefix="/issues", tags=["issues"])
 
@@ -64,6 +71,9 @@ def _severity(tickets_this_week: int, pct_change: float | None) -> IssueSeverity
     return "watch"
 
 
+_SEVERITY_RANK: dict[IssueSeverity, int] = {"emerging": 0, "elevated": 1, "watch": 2}
+
+
 def _to_summary(db: Session, cluster: IssueCluster) -> IssueClusterSummary:
     this_week, prev_week = _week_counts(db, cluster.id)
     pct = _pct_change(this_week, prev_week)
@@ -84,11 +94,73 @@ def _to_summary(db: Session, cluster: IssueCluster) -> IssueClusterSummary:
 
 @router.get("", response_model=list[IssueClusterSummary])
 def list_issues(_admin: User = Depends(require_admin), db: Session = Depends(get_db)):
-    # A single-ticket "cluster" isn't a recurring issue yet.
-    clusters = db.execute(select(IssueCluster).where(IssueCluster.member_count >= 2)).scalars().all()
+    # A single-ticket "cluster" isn't a recurring issue yet — unless an admin
+    # has explicitly declared it an incident (see create_incident/escalate_ticket
+    # below), in which case it belongs on this page regardless of size.
+    clusters = (
+        db.execute(select(IssueCluster).where(or_(IssueCluster.member_count >= 2, IssueCluster.incident_status == "active")))
+        .scalars()
+        .all()
+    )
     summaries = [_to_summary(db, c) for c in clusters]
-    summaries.sort(key=lambda s: s.tickets_this_week, reverse=True)
+    # Active incidents first regardless of severity — they're the ones
+    # admins need to act on/track to resolution — then by severity, then by
+    # ticket volume within each severity tier.
+    summaries.sort(key=lambda s: (s.incident_status != "active", _SEVERITY_RANK[s.severity], -s.tickets_this_week))
     return summaries
+
+
+@router.post("", response_model=IssueClusterDetail, status_code=status.HTTP_201_CREATED)
+async def create_incident(
+    payload: NewIncidentCreate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Declares an incident with no existing recurring-issue cluster behind
+    it — for when IT already knows about a problem (e.g. from internal
+    monitoring) before any matching ticket has been filed. See
+    services/issues.create_incident_from_scratch."""
+    if not payload.label.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Label can't be empty")
+    if not payload.message.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incident message can't be empty")
+    cluster = await create_incident_from_scratch(
+        db,
+        label=payload.label.strip(),
+        category=payload.category,
+        description=payload.description.strip(),
+        message=payload.message.strip(),
+        admin=admin,
+        notify_all_staff=payload.notify_all_staff,
+    )
+    db.refresh(cluster)
+    return _build_detail(db, cluster)
+
+
+@router.post("/from-ticket/{ticket_id}", response_model=IssueClusterDetail, status_code=status.HTTP_201_CREATED)
+def escalate_ticket(
+    ticket_id: uuid.UUID,
+    payload: IncidentStart,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Declares a new incident seeded from a single, not-yet-clustered
+    ticket, for an admin who spots a first report that's clearly about to
+    become widespread and doesn't want to wait for 2+ similar tickets to
+    land before acting. See services/issues.escalate_ticket_to_incident."""
+    ticket = db.get(Ticket, ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
+    if not payload.message.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incident message can't be empty")
+    try:
+        cluster = escalate_ticket_to_incident(
+            db, ticket, payload.message.strip(), admin, notify_all_staff=payload.notify_all_staff
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    db.refresh(cluster)
+    return _build_detail(db, cluster)
 
 
 def _build_detail(db: Session, cluster: IssueCluster) -> IssueClusterDetail:

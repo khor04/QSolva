@@ -133,7 +133,7 @@ export function NewTicket() {
           <label className="mb-1 block text-sm text-neutral-600">Attachment</label>
           <AttachmentPicker files={attachments} onChange={setAttachments} />
         </div>
-        {incidentMatch && (
+        {incidentMatch && incidentMatch.is_active_incident && (
           <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
             <p className="mb-1 font-medium">🔶 This looks like a known active issue: {incidentMatch.label}</p>
             {incidentMatch.message && <p className="mb-3 whitespace-pre-wrap">{incidentMatch.message}</p>}
@@ -153,6 +153,32 @@ export function NewTicket() {
                 className="rounded-md border border-border-warm px-3 py-1.5 text-sm hover:bg-primary-light/20 disabled:opacity-50"
               >
                 This is different — keep editing
+              </button>
+            </div>
+          </div>
+        )}
+        {incidentMatch && !incidentMatch.is_active_incident && incidentMatch.is_published_article && (
+          <div className="rounded-md border border-primary-light/50 bg-primary-light/10 p-3 text-sm text-neutral-700">
+            <p className="mb-1 font-medium text-primary-dark">💡 This might already be answered in the Help Center</p>
+            <p className="mb-1 mt-2 text-xs text-neutral-500">Q</p>
+            <p className="mb-2 font-medium">{incidentMatch.article_question}</p>
+            <p className="mb-1 text-xs text-neutral-500">A</p>
+            <p className="mb-3 whitespace-pre-wrap">{incidentMatch.article_answer}</p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setIncidentMatch(null)}
+                className="rounded-md border border-border-warm px-3 py-1.5 text-sm hover:bg-primary-light/20"
+              >
+                That solved it — never mind
+              </button>
+              <button
+                type="button"
+                onClick={() => mutation.mutate()}
+                disabled={mutation.isPending}
+                className="rounded-md bg-primary px-3 py-1.5 text-sm text-white disabled:opacity-50"
+              >
+                {mutation.isPending ? "Submitting..." : "Doesn't fix it — submit anyway"}
               </button>
             </div>
           </div>

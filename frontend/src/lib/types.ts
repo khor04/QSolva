@@ -23,6 +23,8 @@ export interface Ticket {
   assigned_admin_name: string | null;
   escalated_by_admin_id: string | null;
   escalated_by_admin_name: string | null;
+  // Null means not yet grouped into a recurring-issue cluster.
+  cluster_id: string | null;
   title: string;
   description: string;
   category: TicketCategory;
@@ -197,5 +199,9 @@ export interface HelpCenterArticleDetail extends HelpCenterArticleSummary {
 export interface ActiveIncidentMatch {
   cluster_id: string;
   label: string;
+  is_active_incident: boolean;
+  is_published_article: boolean;
   message: string | null;
+  article_question: string | null;
+  article_answer: string | null;
 }

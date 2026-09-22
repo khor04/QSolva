@@ -25,7 +25,7 @@ from app.schemas import (
 )
 from app.services import ai
 from app.services import tickets as ticket_service
-from app.services.issues import match_active_incident, related_activity_for
+from app.services.issues import match_known_issue, related_activity_for
 from app.services.notifications import notify, notify_admins
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
@@ -130,13 +130,24 @@ async def check_active_incident(
 ):
     """Called from the New Ticket form before submission, so a reporter can
     be told "this looks like a known issue" instead of filing a duplicate of
-    something IT has already declared an incident for. See
-    services/issues.match_active_incident for why this is cheap (no AI call
-    at all) when there's no active incident to match against."""
-    cluster = await match_active_incident(db, payload.title, payload.description)
+    something IT already knows about — either a declared active incident, or
+    an issue with a published Help Center answer. See
+    services/issues.match_known_issue for why this is cheap (no AI call at
+    all) when neither exists yet."""
+    cluster = await match_known_issue(db, payload.title, payload.description)
     if cluster is None:
         return None
-    return ActiveIncidentMatch(cluster_id=cluster.id, label=cluster.label, message=cluster.incident_message)
+    is_active = cluster.incident_status == "active"
+    is_published = cluster.article_status == "published"
+    return ActiveIncidentMatch(
+        cluster_id=cluster.id,
+        label=cluster.label,
+        is_active_incident=is_active,
+        is_published_article=is_published,
+        message=cluster.incident_message if is_active else None,
+        article_question=cluster.article_question if is_published else None,
+        article_answer=cluster.article_answer if is_published else None,
+    )
 
 
 @router.post("/{ticket_id}/retry-enrichment", response_model=TicketOut)

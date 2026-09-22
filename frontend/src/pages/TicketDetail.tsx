@@ -1,9 +1,16 @@
 import { useRef, useState, type FormEvent } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { AdminWorkload, FeedbackOutcome, TicketDetailResponse, TicketPriority, TicketStatus } from "@/lib/types";
+import type {
+  AdminWorkload,
+  FeedbackOutcome,
+  IssueClusterDetail,
+  TicketDetailResponse,
+  TicketPriority,
+  TicketStatus,
+} from "@/lib/types";
 
 const NEGATIVE_OUTCOMES: { value: FeedbackOutcome; label: string }[] = [
   { value: "partially_solved", label: "Partially solved" },
@@ -87,6 +94,7 @@ import { TicketProgress } from "@/components/TicketProgress";
 
 export function TicketDetail() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { profile } = useAuth();
   const isAdmin = profile?.role === "admin";
   const queryClient = useQueryClient();
@@ -97,6 +105,9 @@ export function TicketDetail() {
   const [escalateDetails, setEscalateDetails] = useState("");
   const [handoffTarget, setHandoffTarget] = useState("");
   const [confirmingSelfResolve, setConfirmingSelfResolve] = useState(false);
+  const [declaringIncident, setDeclaringIncident] = useState(false);
+  const [incidentMessage, setIncidentMessage] = useState("");
+  const [incidentNotifyAllStaff, setIncidentNotifyAllStaff] = useState(false);
   const [showResolvedFeedbackForm, setShowResolvedFeedbackForm] = useState(false);
   const [showSuggestionFeedbackForm, setShowSuggestionFeedbackForm] = useState(false);
   const pendingSinceRef = useRef<number | null>(null);
@@ -172,6 +183,14 @@ export function TicketDetail() {
   const retryEnrichment = useMutation({
     mutationFn: () => api.post(`/tickets/${id}/retry-enrichment`),
     onSuccess: invalidate,
+  });
+  const escalateToIncident = useMutation({
+    mutationFn: () =>
+      api.post<IssueClusterDetail>(`/issues/from-ticket/${id}`, {
+        message: incidentMessage,
+        notify_all_staff: incidentNotifyAllStaff,
+      }),
+    onSuccess: (cluster) => navigate(`/issues/${cluster.id}`),
   });
   const sendFeedback = useMutation({
     mutationFn: (payload: { outcome: FeedbackOutcome; comment?: string }) =>
@@ -364,6 +383,61 @@ export function TicketDetail() {
                   <button onClick={() => setStatus.mutate("resolved")} className="rounded-md bg-green-600 px-3 py-1.5 text-sm text-white hover:bg-green-700">
                     Mark Resolved
                   </button>
+                  {!ticket.cluster_id && (
+                    <button
+                      onClick={() => setDeclaringIncident(true)}
+                      className="rounded-md border border-border-warm px-3 py-1.5 text-sm hover:bg-primary-light/20"
+                      title="Declare this the first report of a new incident, before other similar tickets come in"
+                    >
+                      Escalate to New Incident
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {declaringIncident && (
+                <div className="rounded-md border border-primary-light/50 bg-primary-light/10 p-3">
+                  <p className="mb-1 text-sm font-medium">Escalate to New Incident</p>
+                  <p className="mb-3 text-sm text-neutral-600">
+                    Declares this the first report of a new, systemic issue — before 2+ similar tickets have
+                    come in to form a cluster on their own. Other staff with a similar problem will start
+                    seeing this on their tickets right away.
+                  </p>
+                  <textarea
+                    value={incidentMessage}
+                    onChange={(e) => setIncidentMessage(e.target.value)}
+                    placeholder="e.g. Email server is down. Investigating — updates to follow."
+                    rows={3}
+                    className="mb-3 w-full rounded-md border border-border-warm px-3 py-2 text-sm"
+                  />
+                  <label className="mb-3 flex items-start gap-2 text-sm text-neutral-700">
+                    <input
+                      type="checkbox"
+                      checked={incidentNotifyAllStaff}
+                      onChange={(e) => setIncidentNotifyAllStaff(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>Notify all staff, not just those who've already filed a ticket.</span>
+                  </label>
+                  {escalateToIncident.isError && (
+                    <p className="mb-2 text-sm text-red-600">Couldn't declare this incident. Please try again.</p>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => escalateToIncident.mutate()}
+                      disabled={escalateToIncident.isPending || !incidentMessage.trim()}
+                      className="rounded-md bg-primary px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                    >
+                      {escalateToIncident.isPending ? "Declaring..." : "Declare incident"}
+                    </button>
+                    <button
+                      onClick={() => setDeclaringIncident(false)}
+                      disabled={escalateToIncident.isPending}
+                      className="rounded-md border border-border-warm px-3 py-1.5 text-sm hover:bg-primary-light/20 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
               )}
 
