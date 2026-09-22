@@ -3,17 +3,26 @@ resolution suggestion synthesis. All calls go through the free-tier Gemini API.
 """
 
 import asyncio
+import base64
 import json
+import logging
 import math
 
 import httpx
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 EMBEDDING_DIM = 768  # must match the `vector(768)` column in ticket_embeddings
 RETRYABLE_STATUS = {429, 503}
 MAX_RETRIES = 3
+# Screenshots are the whole point of letting a reporter attach one, but an
+# unbounded number would blow up the free-tier request size/quota — cap both
+# how many we send and how large each one can be.
+MAX_IMAGE_ATTACHMENTS = 4
+MAX_IMAGE_BYTES = 15 * 1024 * 1024
 
 
 async def _post_with_retry(url: str, payload: dict) -> httpx.Response:
@@ -47,10 +56,34 @@ async def embed_text(text: str) -> list[float]:
     return values
 
 
-async def _generate_json(prompt: str) -> dict:
+async def _fetch_image_parts(attachment_urls: list[str]) -> list[dict]:
+    """Downloads a ticket's image attachments and returns them as Gemini
+    inline_data parts, so triage/suggestion prompts can see what's actually
+    in a screenshot instead of relying on the reporter's typed description
+    alone. Skips anything that isn't fetchable or isn't an image rather than
+    failing the whole AI stage over one bad attachment."""
+    parts: list[dict] = []
+    if not attachment_urls:
+        return parts
+    async with httpx.AsyncClient(timeout=15) as client:
+        for url in attachment_urls[:MAX_IMAGE_ATTACHMENTS]:
+            try:
+                resp = await client.get(url)
+                resp.raise_for_status()
+            except httpx.HTTPError:
+                logger.warning("Could not fetch ticket attachment for AI analysis: %s", url)
+                continue
+            mime_type = resp.headers.get("content-type", "").split(";")[0]
+            if not mime_type.startswith("image/") or len(resp.content) > MAX_IMAGE_BYTES:
+                continue
+            parts.append({"inline_data": {"mime_type": mime_type, "data": base64.b64encode(resp.content).decode()}})
+    return parts
+
+
+async def _generate_json(prompt: str, image_parts: list[dict] | None = None) -> dict:
     url = f"{GEMINI_BASE}/models/{settings.llm_model}:generateContent?key={settings.gemini_api_key}"
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
+        "contents": [{"parts": [{"text": prompt}, *(image_parts or [])]}],
         "generationConfig": {"responseMimeType": "application/json"},
     }
     resp = await _post_with_retry(url, payload)
@@ -58,7 +91,10 @@ async def _generate_json(prompt: str) -> dict:
     return json.loads(text)
 
 
-async def classify_priority(title: str, description: str, category: str) -> tuple[str, float, str]:
+async def classify_priority(
+    title: str, description: str, category: str, attachment_urls: list[str] | None = None
+) -> tuple[str, float, str]:
+    image_parts = await _fetch_image_parts(attachment_urls or [])
     prompt = f"""You are an IT service desk triage assistant. Classify this ticket's priority
 using these severity definitions:
 
@@ -86,10 +122,11 @@ Ticket:
 Title: {title}
 Description: {description}
 Category: {category}
+{"One or more screenshots the reporter attached are included below — read any error messages, dialogs, or visible context in them and weigh that alongside the description." if image_parts else ""}
 
 Respond with JSON only:
 {{"priority": "low"|"medium"|"high"|"critical", "confidence": 0.0-1.0, "reason": "one short sentence explaining the classification"}}"""
-    result = await _generate_json(prompt)
+    result = await _generate_json(prompt, image_parts)
     return result["priority"], float(result["confidence"]), result["reason"]
 
 
@@ -97,10 +134,13 @@ async def synthesize_suggestion(
     title: str,
     description: str,
     similar_tickets: list[dict],
+    attachment_urls: list[str] | None = None,
 ) -> tuple[str, float]:
     """similar_tickets: [{"title", "description", "resolution", "similarity"}]"""
     if not similar_tickets:
         return "", 0.0
+
+    image_parts = await _fetch_image_parts(attachment_urls or [])
 
     evidence_text = "\n\n".join(
         f"Similar ticket (similarity {t['similarity']:.2f}):\n"
@@ -113,6 +153,7 @@ async def synthesize_suggestion(
 
 Title: {title}
 Description: {description}
+{"One or more screenshots the reporter attached are included below — use any error messages or visible context in them to judge whether a similar ticket's resolution actually applies here." if image_parts else ""}
 
 Here are similar previously resolved tickets:
 
@@ -125,7 +166,7 @@ or closing remarks, just the numbered steps. If the similar tickets don't share 
 consistent resolution, say so with low confidence instead of guessing.
 
 Respond with JSON only: {{"resolution": "numbered steps as described above", "confidence": 0.0-1.0}}"""
-    result = await _generate_json(prompt)
+    result = await _generate_json(prompt, image_parts)
     return result["resolution"], float(result["confidence"])
 
 

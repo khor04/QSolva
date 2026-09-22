@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import AiSuggestion, Ticket, TicketEmbedding, TicketMessage, User
+from app.models import AiSuggestion, Ticket, TicketAttachment, TicketEmbedding, TicketMessage, User
 from app.services import ai
 from app.services import issues as issue_clustering
 from app.services.notifications import notify, notify_admins
@@ -141,10 +141,22 @@ def _notify_if_failed(db: Session, ticket: Ticket) -> None:
         db.commit()
 
 
+def _attachment_urls(db: Session, ticket_id: uuid.UUID) -> list[str]:
+    # Ordered oldest-first so that ai._fetch_image_parts's MAX_IMAGE_ATTACHMENTS
+    # cap consistently keeps the earliest-uploaded screenshots rather than an
+    # arbitrary DB-dependent subset.
+    stmt = (
+        select(TicketAttachment.file_url)
+        .where(TicketAttachment.ticket_id == ticket_id)
+        .order_by(TicketAttachment.created_at)
+    )
+    return list(db.execute(stmt).scalars())
+
+
 async def _run_priority_stage(db: Session, ticket: Ticket) -> None:
     try:
         priority, confidence, reason = await ai.classify_priority(
-            ticket.title, ticket.description, ticket.category
+            ticket.title, ticket.description, ticket.category, _attachment_urls(db, ticket.id)
         )
     except Exception:
         logger.exception("AI priority classification failed for ticket %s", ticket.id)
@@ -230,7 +242,7 @@ async def _run_rag_stage(db: Session, ticket: Ticket) -> None:
             return
 
         resolution_text, suggestion_confidence = await ai.synthesize_suggestion(
-            ticket.title, ticket.description, similar_for_ai
+            ticket.title, ticket.description, similar_for_ai, _attachment_urls(db, ticket.id)
         )
         if resolution_text and suggestion_confidence >= MIN_SUGGESTION_CONFIDENCE:
             db.add(

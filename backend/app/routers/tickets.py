@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.deps import get_current_user, require_admin
@@ -23,6 +23,7 @@ from app.schemas import (
     TicketOut,
     TicketUpdate,
 )
+from app.services import ai
 from app.services import tickets as ticket_service
 from app.services.issues import match_active_incident, related_activity_for
 from app.services.notifications import notify, notify_admins
@@ -63,7 +64,6 @@ def _ensure_not_done(ticket: Ticket) -> None:
 @router.post("", response_model=TicketOut, status_code=status.HTTP_201_CREATED)
 def create_ticket(
     payload: TicketCreate,
-    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -92,9 +92,28 @@ def create_ticket(
     db.add(ticket)
     db.commit()
     db.refresh(ticket)
+    return ticket
+
+
+@router.post("/{ticket_id}/start-enrichment", status_code=status.HTTP_202_ACCEPTED)
+def start_enrichment(
+    ticket_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Kicks off AI priority classification + resolution-suggestion enrichment
+    for a just-created ticket. Split out from create_ticket and called by the
+    client only after any attachment uploads have finished, so the AI stages
+    see attached screenshots that are already linked in the DB rather than
+    racing the client's upload (create_ticket returns, and returns fast,
+    well before a client-side Supabase Storage upload + attachment POST can
+    complete)."""
+    ticket = _get_ticket_or_404(db, ticket_id)
+    _authorize_ticket_access(ticket, user)
 
     background_tasks.add_task(_run_process_new_ticket, ticket.id)
-    return ticket
+    return {"status": "started"}
 
 
 def _run_process_new_ticket(ticket_id: uuid.UUID) -> None:
@@ -365,6 +384,15 @@ def add_attachment(
     This endpoint just links the resulting URL to the ticket."""
     ticket = _get_ticket_or_404(db, ticket_id)
     _authorize_ticket_access(ticket, user)
+
+    existing_count = db.execute(
+        select(func.count()).select_from(TicketAttachment).where(TicketAttachment.ticket_id == ticket.id)
+    ).scalar_one()
+    if existing_count >= ai.MAX_IMAGE_ATTACHMENTS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"A ticket can have at most {ai.MAX_IMAGE_ATTACHMENTS} attachments",
+        )
 
     attachment = TicketAttachment(
         ticket_id=ticket.id,

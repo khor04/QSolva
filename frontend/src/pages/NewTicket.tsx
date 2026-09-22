@@ -35,6 +35,12 @@ export function NewTicket() {
         }),
       );
       const failed = results.filter((r) => r.status === "rejected").length;
+
+      // Only now that any attachments are uploaded and linked do we kick off
+      // AI enrichment, so priority classification/suggestions can actually
+      // see a screenshot instead of running before it's attached.
+      await api.post(`/tickets/${ticket.id}/start-enrichment`);
+
       return { ticket, failed };
     },
     onSuccess: ({ ticket, failed }) => {

@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 
+// Keep in sync with MAX_IMAGE_ATTACHMENTS in backend/app/services/ai.py —
+// that's the number of screenshots the AI stage actually looks at, so
+// letting people attach more here would just mean silently-ignored uploads.
+const MAX_ATTACHMENTS = 4;
+
 interface Props {
   files: File[];
   onChange: (files: File[]) => void;
@@ -8,6 +13,7 @@ interface Props {
 export function AttachmentPicker({ files, onChange }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const atLimit = files.length >= MAX_ATTACHMENTS;
 
   useEffect(() => {
     const urls = files.map((f) => URL.createObjectURL(f));
@@ -17,6 +23,7 @@ export function AttachmentPicker({ files, onChange }: Props) {
 
   useEffect(() => {
     function handlePaste(e: ClipboardEvent) {
+      if (files.length >= MAX_ATTACHMENTS) return;
       const images = Array.from(e.clipboardData?.items ?? [])
         .filter((item) => item.type.startsWith("image/"))
         .map((item) => item.getAsFile())
@@ -24,7 +31,7 @@ export function AttachmentPicker({ files, onChange }: Props) {
 
       if (images.length > 0) {
         e.preventDefault();
-        onChange([...files, ...images]);
+        onChange([...files, ...images].slice(0, MAX_ATTACHMENTS));
       }
     }
 
@@ -34,7 +41,7 @@ export function AttachmentPicker({ files, onChange }: Props) {
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const selected = Array.from(e.target.files ?? []);
-    if (selected.length > 0) onChange([...files, ...selected]);
+    if (selected.length > 0) onChange([...files, ...selected].slice(0, MAX_ATTACHMENTS));
     e.target.value = "";
   }
 
@@ -45,22 +52,28 @@ export function AttachmentPicker({ files, onChange }: Props) {
   return (
     <div>
       <div className="rounded-md border border-dashed border-border-warm bg-cream p-4 text-center text-sm text-neutral-500">
-        <p>
-          Paste a screenshot (<kbd className="rounded border border-border-warm bg-white px-1">Ctrl</kbd>+
-          <kbd className="rounded border border-border-warm bg-white px-1">V</kbd>) anywhere on this page, or{" "}
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
-            className="font-medium text-primary-dark underline"
-          >
-            upload a file
-          </button>
-        </p>
+        {atLimit ? (
+          <p>Maximum of {MAX_ATTACHMENTS} screenshots reached. Remove one to add another.</p>
+        ) : (
+          <p>
+            Paste a screenshot (<kbd className="rounded border border-border-warm bg-white px-1">Ctrl</kbd>+
+            <kbd className="rounded border border-border-warm bg-white px-1">V</kbd>) anywhere on this page, or{" "}
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              className="font-medium text-primary-dark underline"
+            >
+              upload a file
+            </button>{" "}
+            (up to {MAX_ATTACHMENTS})
+          </p>
+        )}
         <input
           ref={inputRef}
           type="file"
           accept="image/*"
           multiple
+          disabled={atLimit}
           onChange={handleFileSelect}
           className="hidden"
         />
