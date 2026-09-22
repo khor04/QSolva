@@ -35,12 +35,13 @@ def notify_admins(
     notification_type: str,
     ticket_id: uuid.UUID | None = None,
     exclude_user_id: uuid.UUID | None = None,
+    message: str | None = None,
 ) -> None:
     admin_ids = db.execute(select(User.id).where(User.role == "admin")).scalars().all()
     for admin_id in admin_ids:
         if admin_id == exclude_user_id:
             continue
-        notify(db, admin_id, notification_type, ticket_id)
+        notify(db, admin_id, notification_type, ticket_id, message=message)
 
 
 def all_staff_ids(db: Session) -> list[uuid.UUID]:

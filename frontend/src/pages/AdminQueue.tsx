@@ -8,29 +8,54 @@ import { TICKET_CATEGORIES, type Ticket, type TicketCategory, type TicketPriorit
 import { StatusBadge, PriorityBadge } from "@/components/Badge";
 import { PaginationControls } from "@/components/PaginationControls";
 import { TeamWorkload } from "@/components/TeamWorkload";
+import { formatDurationShort, getSla, useNow } from "@/lib/sla";
 
-type Filter = "open" | "unassigned" | "mine" | "critical";
-const FILTERS: Filter[] = ["open", "unassigned", "mine", "critical"];
+type Filter = "open" | "unassigned" | "mine" | "critical" | "overdue";
+const FILTERS: Filter[] = ["open", "unassigned", "mine", "critical", "overdue"];
 const PAGE_SIZE = 10;
-const OVERDUE_MS = 5 * 24 * 60 * 60 * 1000;
 const PRIORITY_RANK: Record<TicketPriority, number> = { critical: 4, high: 3, medium: 2, low: 1 };
 
-function isOverdue(t: Ticket): boolean {
-  // Once resolved, it's waiting on the staff member to confirm — not on the
-  // admin — so it shouldn't be flagged as something the admin is neglecting.
+// Overdue against the ticket's own SLA deadline (first response until an admin
+// picks it up, then resolution). Resolved/closed tickets aren't waiting on an
+// admin, so getSla never reports them as overdue.
+function isOverdue(t: Ticket, now: number): boolean {
+  return getSla(t, now).level === "overdue";
+}
+
+const IDLE_MS = 24 * 60 * 60 * 1000;
+
+// An admin replied last and nothing's moved since — the ball is in the
+// staff member's court, or the admin forgot to close it out. Distinct from
+// SLA overdue: this can't fire on a ticket nobody has touched yet.
+function isIdle(t: Ticket, now: number): boolean {
   return (
-    t.status !== "closed" &&
-    t.status !== "resolved" &&
-    Date.now() - new Date(t.created_at).getTime() > OVERDUE_MS
+    t.status === "in_progress" &&
+    t.last_message_by === "admin" &&
+    !!t.last_message_at &&
+    now - new Date(t.last_message_at).getTime() > IDLE_MS
   );
+}
+
+function SlaCell({ ticket, now }: { ticket: Ticket; now: number }) {
+  const sla = getSla(ticket, now);
+  if (sla.level === null) return <span className="text-neutral-400">—</span>;
+  const what = sla.phase === "response" ? "Response" : "Resolution";
+  const time = formatDurationShort(sla.msUntilDue);
+  if (sla.level === "overdue") {
+    return <span className="font-medium text-red-700">🔴 {what} overdue by {time}</span>;
+  }
+  if (sla.level === "due_soon") {
+    return <span className="font-medium text-orange-700">🟠 {what} due in {time}</span>;
+  }
+  return <span className="text-green-700">🟢 {what} due in {time}</span>;
 }
 
 // Overdue tickets always surface first, then most urgent priority, then
 // whichever has gone longest without an update within the same tier — so
 // nothing urgent gets buried and nothing stale gets forgotten.
-function sortQueue(tickets: Ticket[]): Ticket[] {
+function sortQueue(tickets: Ticket[], now: number): Ticket[] {
   return [...tickets].sort((a, b) => {
-    const overdueDiff = Number(isOverdue(b)) - Number(isOverdue(a));
+    const overdueDiff = Number(isOverdue(b, now)) - Number(isOverdue(a, now));
     if (overdueDiff !== 0) return overdueDiff;
     const priorityDiff = PRIORITY_RANK[b.priority] - PRIORITY_RANK[a.priority];
     if (priorityDiff !== 0) return priorityDiff;
@@ -52,29 +77,31 @@ function startOfNextLocalDay(day: string): string {
   return new Date(y, m - 1, d + 1).toISOString();
 }
 
-function QueueTable({ tickets, currentAdminId }: { tickets: Ticket[]; currentAdminId?: string }) {
+function QueueTable({ tickets, currentAdminId, now }: { tickets: Ticket[]; currentAdminId?: string; now: number }) {
   return (
     <div className="overflow-hidden rounded-lg border border-border-warm bg-white">
       <table className="w-full table-fixed text-left text-sm">
         <colgroup>
-          <col className="w-[38%]" />
-          <col className="w-[13%]" />
-          <col className="w-[13%]" />
-          <col className="w-[18%]" />
-          <col className="w-[18%]" />
+          <col className="w-[27%]" />
+          <col className="w-[10%]" />
+          <col className="w-[11%]" />
+          <col className="w-[20%]" />
+          <col className="w-[16%]" />
+          <col className="w-[16%]" />
         </colgroup>
         <thead className="border-b border-border-warm bg-cream text-neutral-500">
           <tr>
             <th className="px-4 py-2 font-medium">Title</th>
             <th className="px-4 py-2 font-medium">Priority</th>
             <th className="px-4 py-2 font-medium">Status</th>
+            <th className="px-4 py-2 font-medium">SLA</th>
             <th className="px-4 py-2 font-medium">Assigned</th>
             <th className="px-4 py-2 font-medium">Updated</th>
           </tr>
         </thead>
         <tbody>
           {tickets.map((ticket) => {
-            const overdue = isOverdue(ticket);
+            const overdue = isOverdue(ticket, now);
             return (
               <tr
                 key={ticket.id}
@@ -90,15 +117,19 @@ function QueueTable({ tickets, currentAdminId }: { tickets: Ticket[]; currentAdm
                     >
                       {ticket.title}
                     </Link>
-                    {overdue && (
-                      <span className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                        Overdue
+                    {isIdle(ticket, now) && (
+                      <span
+                        title="An admin replied over 24h ago and the ticket hasn't moved since"
+                        className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+                      >
+                        ⚠️ Awaiting staff
                       </span>
                     )}
                   </div>
                 </td>
                 <td className="px-4 py-3"><PriorityBadge priority={ticket.priority} /></td>
                 <td className="px-4 py-3"><StatusBadge status={ticket.status} /></td>
+                <td className="px-4 py-3 text-xs"><SlaCell ticket={ticket} now={now} /></td>
                 <td className="truncate px-4 py-3 text-neutral-500">
                   {ticket.assigned_admin_id
                     ? ticket.assigned_admin_id === currentAdminId
@@ -163,6 +194,7 @@ function ResolvedTable({ tickets }: { tickets: Ticket[] }) {
 
 export function AdminQueue() {
   const { profile } = useAuth();
+  const now = useNow();
   const [activeFilters, setActiveFilters] = useState<Set<Filter>>(new Set());
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -201,16 +233,17 @@ export function AdminQueue() {
       (activeFilters.has("open") && t.status === "open") ||
       (activeFilters.has("unassigned") && !t.assigned_admin_id) ||
       (activeFilters.has("mine") && t.assigned_admin_id === profile?.id) ||
-      (activeFilters.has("critical") && t.priority === "critical")
+      (activeFilters.has("critical") && t.priority === "critical") ||
+      (activeFilters.has("overdue") && isOverdue(t, now))
     );
   };
 
   const filtered = useMemo(() => {
     return (data ?? []).filter(matchesFilters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, activeFilters, profile?.id]);
+  }, [data, activeFilters, profile?.id, now]);
 
-  const active = sortQueue(filtered.filter((t) => t.status !== "closed" && t.status !== "resolved"));
+  const active = sortQueue(filtered.filter((t) => t.status !== "closed" && t.status !== "resolved"), now);
   const awaitingConfirmation = filtered.filter((t) => t.status === "resolved");
   const history = filtered.filter((t) => t.status === "closed");
 
@@ -337,7 +370,7 @@ export function AdminQueue() {
             <h2 className="mb-3 text-sm font-medium text-neutral-500">Active</h2>
             {active.length > 0 ? (
               <>
-                <QueueTable tickets={activePage.pageItems} currentAdminId={profile?.id} />
+                <QueueTable tickets={activePage.pageItems} currentAdminId={profile?.id} now={now} />
                 <PaginationControls
                   page={activePage.page}
                   totalPages={activePage.totalPages}
@@ -372,7 +405,7 @@ export function AdminQueue() {
       {history.length > 0 && (
         <div>
           <h2 className="mb-3 text-sm font-medium text-neutral-500">History</h2>
-          <QueueTable tickets={historyPage.pageItems} currentAdminId={profile?.id} />
+          <QueueTable tickets={historyPage.pageItems} currentAdminId={profile?.id} now={now} />
           <PaginationControls
             page={historyPage.page}
             totalPages={historyPage.totalPages}

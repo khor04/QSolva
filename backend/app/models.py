@@ -84,6 +84,21 @@ class Ticket(Base):
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # First time an admin claimed, replied to, or resolved this ticket. Once
+    # set it stays set — it's what the "respond by" SLA is judged against.
+    first_response_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # Stored rather than computed on read: services/sla_policy.compute_due_dates
+    # walks a business-hours clock for medium/low priority, which isn't
+    # expressible as a plain SQL comparison. Set on creation and recomputed
+    # whenever priority changes (AI classification or an admin override) — see
+    # routers/tickets.py and services/tickets.py.
+    response_due_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    resolution_due_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
+    # Who posted the most recent message and when, updated on every reply
+    # (see routers/tickets.post_message). Lets the admin queue flag "an admin
+    # replied and nothing's moved since" without a per-ticket message lookup.
+    last_message_by: Mapped[str | None] = mapped_column(user_role, nullable=True)
+    last_message_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     messages: Mapped[list["TicketMessage"]] = relationship(back_populates="ticket", order_by="TicketMessage.created_at")
     suggestions: Mapped[list["AiSuggestion"]] = relationship(back_populates="ticket", order_by="AiSuggestion.created_at.desc()")

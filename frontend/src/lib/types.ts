@@ -36,6 +36,15 @@ export interface Ticket {
   created_at: string;
   updated_at: string;
   resolved_at: string | null;
+  // When an admin first claimed/replied/resolved. The due times come from the
+  // backend's SLA policy for the ticket's current priority.
+  first_response_at: string | null;
+  response_due_at: string;
+  resolution_due_at: string;
+  // Who posted the most recent message, and when — lets the admin queue flag
+  // a ticket where an admin replied and nothing's moved since.
+  last_message_by: "staff" | "admin" | null;
+  last_message_at: string | null;
 }
 
 export interface TicketMessage {

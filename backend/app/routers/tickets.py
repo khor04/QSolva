@@ -71,6 +71,9 @@ def create_ticket(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only staff can submit tickets")
 
     now = _now()
+    # Starts on the "medium" clock — reclassified (and due dates recomputed)
+    # once AI priority classification finishes, see _run_priority_stage.
+    response_due_at, resolution_due_at = ticket_service.compute_due_dates(now, "medium")
     ticket = Ticket(
         staff_id=user.id,
         title=payload.title,
@@ -83,6 +86,8 @@ def create_ticket(
         ai_rag_status="pending",
         created_at=now,
         updated_at=now,
+        response_due_at=response_due_at,
+        resolution_due_at=resolution_due_at,
     )
     db.add(ticket)
     db.commit()
@@ -258,9 +263,20 @@ def update_ticket(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Use POST /tickets/{id}/unassign to release an assigned ticket back to the queue",
         )
+    if payload.status == "in_progress":
+        # No generic path in: claim (open/escalated -> in_progress) and
+        # handoff (POST .../escalate with a target) both pair it with
+        # assigning an admin and stamping first_response_at, which a bare
+        # status write here would skip.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Use POST /tickets/{id}/claim, or /escalate with a target_admin_id, to move a ticket to in_progress",
+        )
     if payload.status is not None:
         _ensure_not_done(ticket)
         ticket.status = payload.status
+        if ticket.first_response_at is None:
+            ticket.first_response_at = _now()
         if payload.status == "resolved":
             ticket.resolved_at = _now()
             notify(db, ticket.staff_id, "resolution_confirm_needed", ticket.id)
@@ -277,6 +293,12 @@ def update_ticket(
         # the priority they no longer apply and would be misleading if shown.
         ticket.priority_confidence = None
         ticket.priority_reason = None
+        # A different priority can mean a different SLA clock entirely
+        # (business-hours vs 24/7), not just a different offset — recompute
+        # both deadlines from the original creation time.
+        ticket.response_due_at, ticket.resolution_due_at = ticket_service.compute_due_dates(
+            ticket.created_at, payload.priority
+        )
     ticket.updated_at = _now()
     db.commit()
     db.refresh(ticket)
@@ -293,9 +315,20 @@ def post_message(
     ticket = _get_ticket_or_404(db, ticket_id)
     _authorize_ticket_access(ticket, user)
 
-    message = TicketMessage(ticket_id=ticket.id, sender_id=user.id, body=payload.body, created_at=_now())
+    if payload.mark_resolved:
+        if user.role != "admin":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can resolve a ticket")
+        # Same guard as PATCH .../resolved — checked before writing anything,
+        # so a stale double-submit doesn't post the reply and then 409 on the
+        # status change, leaving the reply orphaned with no resolution.
+        _ensure_not_done(ticket)
+
+    now = _now()
+    message = TicketMessage(ticket_id=ticket.id, sender_id=user.id, body=payload.body, created_at=now)
     db.add(message)
-    ticket.updated_at = _now()
+    ticket.updated_at = now
+    ticket.last_message_by = user.role
+    ticket.last_message_at = now
 
     if user.role == "staff":
         if ticket.assigned_admin_id:
@@ -303,7 +336,17 @@ def post_message(
         else:
             notify_admins(db, "staff_replied", ticket.id)
     else:
-        notify(db, ticket.staff_id, "ticket_replied", ticket.id)
+        if ticket.first_response_at is None:
+            ticket.first_response_at = now
+        if payload.mark_resolved:
+            ticket.status = "resolved"
+            ticket.resolved_at = now
+            # More specific than the generic "admin replied" notice below —
+            # matches what PATCH .../resolved sends, and avoids notifying the
+            # staff member twice for one action.
+            notify(db, ticket.staff_id, "resolution_confirm_needed", ticket.id)
+        else:
+            notify(db, ticket.staff_id, "ticket_replied", ticket.id)
 
     db.commit()
     db.refresh(message)

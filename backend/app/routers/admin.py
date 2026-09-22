@@ -10,7 +10,7 @@ from app.db import get_db
 from app.deps import require_admin
 from app.models import AdminInviteCode, Ticket, User
 from app.schemas import AdminInviteCodeCreate, AdminInviteCodeOut, AdminWorkload
-from app.services.sla import SLA_THRESHOLD_DAYS
+from app.services.sla import ACTIVE_STATUSES, overdue_clause
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -35,21 +35,20 @@ def get_workload(_admin: User = Depends(require_admin), db: Session = Depends(ge
     """Per-admin load so someone deciding what to claim, or who to hand a
     ticket to, can see who is carrying what. Outer join so an admin with
     nothing assigned still shows up (as idle) rather than vanishing."""
-    overdue_cutoff = datetime.now(timezone.utc) - timedelta(days=SLA_THRESHOLD_DAYS)
     rows = db.execute(
         select(
             User.id,
             User.name,
             func.count(Ticket.id),
             func.count(Ticket.id).filter(Ticket.priority.in_(["high", "critical"])),
-            func.count(Ticket.id).filter(Ticket.created_at < overdue_cutoff),
+            func.count(Ticket.id).filter(overdue_clause(datetime.now(timezone.utc))),
         )
         .select_from(User)
         .outerjoin(
             Ticket,
             and_(
                 Ticket.assigned_admin_id == User.id,
-                Ticket.status.in_(["open", "in_progress", "escalated"]),
+                Ticket.status.in_(ACTIVE_STATUSES),
             ),
         )
         .where(User.role == "admin", User.deleted_at.is_(None))

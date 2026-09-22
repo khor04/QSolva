@@ -13,7 +13,14 @@ const MESSAGES: Record<NotificationType, (n: Notification, viewerRole?: Role) =>
   new_critical_ticket: (n) => `New critical ticket: "${n.ticket_title ?? "a ticket"}".`,
   staff_replied: (n) => `Staff replied on "${n.ticket_title ?? "a ticket"}".`,
   suggestion_failed: (n) => `AI couldn't analyze "${n.ticket_title ?? "a ticket"}".`,
-  sla_risk: (n) => `"${n.ticket_title ?? "a ticket"}" is at risk of breaching its SLA.`,
+  // message says which deadline was missed (see services/sla.check_sla_risk);
+  // notifications from before that was recorded have none.
+  sla_risk: (n) =>
+    n.message === "response"
+      ? `🔴 "${n.ticket_title ?? "a ticket"}" is past its first-response deadline.`
+      : n.message === "resolution"
+        ? `🔴 "${n.ticket_title ?? "a ticket"}" is past its resolution deadline.`
+        : `"${n.ticket_title ?? "a ticket"}" is at risk of breaching its SLA.`,
   ticket_escalated: (n, viewerRole) =>
     viewerRole === "admin"
       ? `🔴 Ticket escalated — "${n.ticket_title ?? "a ticket"}" needs another admin's attention.`

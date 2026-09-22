@@ -15,6 +15,7 @@ from app.models import AiSuggestion, Ticket, TicketEmbedding, TicketMessage, Use
 from app.services import ai
 from app.services import issues as issue_clustering
 from app.services.notifications import notify, notify_admins
+from app.services.sla_policy import compute_due_dates
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +158,9 @@ async def _run_priority_stage(db: Session, ticket: Ticket) -> None:
     ticket.priority_reason = reason
     ticket.priority_source = "ai"
     ticket.ai_priority_status = "success"
+    # Reclassifying can move the ticket onto a different SLA clock (e.g.
+    # medium's business-hours clock to critical's 24/7 one).
+    ticket.response_due_at, ticket.resolution_due_at = compute_due_dates(ticket.created_at, priority)
     # Tied to the transition into critical (not just the classification
     # result) so a retry that reclassifies an already-critical ticket as
     # critical again doesn't re-notify admins for no new reason.
@@ -251,12 +255,17 @@ async def _run_rag_stage(db: Session, ticket: Ticket) -> None:
 
 
 def claim_ticket(db: Session, ticket: Ticket, admin_id: uuid.UUID) -> None:
+    now = _now()
     ticket.assigned_admin_id = admin_id
     ticket.status = "in_progress"
+    # Claiming counts as the first response for SLA purposes; only the first
+    # claim does, so a later handoff doesn't move the deadline it was judged on.
+    if ticket.first_response_at is None:
+        ticket.first_response_at = now
     # Whoever escalated it is no longer relevant once someone takes ownership.
     ticket.escalated_by_admin_id = None
     ticket.escalation_reason = None
-    ticket.updated_at = _now()
+    ticket.updated_at = now
     db.commit()
 
 

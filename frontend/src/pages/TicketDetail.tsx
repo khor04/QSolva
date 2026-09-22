@@ -83,6 +83,7 @@ const ESCALATE_REASONS = [
   "Other",
 ];
 import { StatusBadge, PriorityBadge } from "@/components/Badge";
+import { TicketProgress } from "@/components/TicketProgress";
 
 export function TicketDetail() {
   const { id } = useParams<{ id: string }>();
@@ -123,7 +124,8 @@ export function TicketDetail() {
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["tickets", id] });
 
   const sendMessage = useMutation({
-    mutationFn: () => api.post(`/tickets/${id}/messages`, { body: reply }),
+    mutationFn: (markResolved: boolean) =>
+      api.post(`/tickets/${id}/messages`, { body: reply, mark_resolved: markResolved }),
     onSuccess: () => {
       setReply("");
       invalidate();
@@ -192,7 +194,15 @@ export function TicketDetail() {
 
   function handleReply(e: FormEvent) {
     e.preventDefault();
-    if (reply.trim()) sendMessage.mutate();
+    if (reply.trim()) sendMessage.mutate(false);
+  }
+
+  // Admin-only second action on the reply form: posts the same reply but
+  // also moves the ticket to Resolved in one round trip, so a fix doesn't
+  // sit in "In progress" just because clicking a second button was easy to
+  // forget.
+  function handleReplyAndResolve() {
+    if (reply.trim()) sendMessage.mutate(true);
   }
 
   return (
@@ -202,6 +212,19 @@ export function TicketDetail() {
         <PriorityBadge priority={ticket.priority} />
         <StatusBadge status={ticket.status} />
       </div>
+
+      <TicketProgress
+        ticket={ticket}
+        admin={
+          isAdmin
+            ? {
+                onStart: () => claim.mutate(),
+                onResolve: () => setStatus.mutate("resolved"),
+                busy: claim.isPending || setStatus.isPending,
+              }
+            : undefined
+        }
+      />
 
       {related_activity && (
         <div
@@ -267,11 +290,25 @@ export function TicketDetail() {
             />
             <button
               type="submit"
-              disabled={sendMessage.isPending}
+              disabled={sendMessage.isPending || !reply.trim()}
               className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
               Reply
             </button>
+            {/* Admin-only: post the reply and move the ticket to Resolved in
+                one action, so a fix doesn't get typed and then left sitting
+                in "In progress" because a second click was easy to skip. */}
+            {isAdmin && !isTicketDone && (
+              <button
+                type="button"
+                onClick={handleReplyAndResolve}
+                disabled={sendMessage.isPending || !reply.trim()}
+                title="Post this reply and mark the ticket resolved"
+                className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                Send &amp; Resolve
+              </button>
+            )}
           </form>
 
           {isAdmin && !isTicketDone && (

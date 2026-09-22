@@ -225,6 +225,8 @@ def resolve_incident(db: Session, cluster: IssueCluster, resolution_text: str, a
         db.add(TicketMessage(ticket_id=t.id, sender_id=admin.id, body=resolution_text, created_at=now))
         t.status = "resolved"
         t.resolved_at = now
+        if t.first_response_at is None:
+            t.first_response_at = now
         t.updated_at = now
         t.escalated_by_admin_id = None
         notify(db, t.staff_id, "resolution_confirm_needed", t.id)

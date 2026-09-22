@@ -60,10 +60,22 @@ class TicketOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     resolved_at: datetime | None
+    first_response_at: datetime | None
+    response_due_at: datetime
+    resolution_due_at: datetime
+    # Who posted the most recent message and when — lets the admin queue flag
+    # "admin replied, nothing's moved since" without a per-ticket message
+    # query. See routers/tickets.post_message.
+    last_message_by: Literal["staff", "admin"] | None
+    last_message_at: datetime | None
 
 
 class MessageCreate(BaseModel):
     body: str
+    # Lets an admin resolve in the same roundtrip as their reply, instead of
+    # replying and then having to remember a second click. Ignored (and
+    # rejected, see routers/tickets.post_message) for staff.
+    mark_resolved: bool = False
 
 
 class EscalateRequest(BaseModel):

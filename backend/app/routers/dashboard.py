@@ -15,10 +15,9 @@ from app.schemas import (
     DashboardTrendPoint,
     PriorityDistribution,
 )
+from app.services.sla import ACTIVE_STATUSES, overdue_clause
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
-
-OVERDUE_MS_DAYS = 5
 
 
 def _now() -> datetime:
@@ -29,14 +28,13 @@ def _now() -> datetime:
 def get_stats(_admin: User = Depends(require_admin), db: Session = Depends(get_db)):
     total = db.execute(select(func.count()).select_from(Ticket)).scalar_one()
     open_count = db.execute(
-        select(func.count()).select_from(Ticket).where(Ticket.status.in_(["open", "in_progress", "escalated"]))
+        select(func.count()).select_from(Ticket).where(Ticket.status.in_(ACTIVE_STATUSES))
     ).scalar_one()
 
-    overdue_cutoff = _now() - timedelta(days=OVERDUE_MS_DAYS)
     overdue_count = db.execute(
         select(func.count())
         .select_from(Ticket)
-        .where(Ticket.status.in_(["open", "in_progress", "escalated"]), Ticket.created_at < overdue_cutoff)
+        .where(Ticket.status.in_(ACTIVE_STATUSES), overdue_clause(_now()))
     ).scalar_one()
 
     resolved_count = db.execute(
