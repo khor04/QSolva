@@ -31,6 +31,10 @@ class TicketCreate(BaseModel):
     title: str
     description: str
     category: TicketCategory
+    # Set when the reporter clicked "Doesn't fix it — submit anyway" on the
+    # pre-submit Help Center match (see NewTicket.tsx) — which cluster's
+    # already-published answer they tried first and it didn't work.
+    already_tried_cluster_id: uuid.UUID | None = None
 
 
 class TicketUpdate(BaseModel):
@@ -52,6 +56,8 @@ class TicketOut(BaseModel):
     # (a ticket already in a cluster should use that cluster's own incident
     # flow on the Issues page instead of creating a second, overlapping one).
     cluster_id: uuid.UUID | None
+    already_tried_cluster_id: uuid.UUID | None
+    already_tried_label: str | None
     title: str
     description: str
     category: TicketCategory

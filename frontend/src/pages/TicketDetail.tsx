@@ -245,6 +245,14 @@ export function TicketDetail() {
         }
       />
 
+      {ticket.already_tried_cluster_id && (
+        <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          ⚠️ The reporter already tried the Help Center answer for{" "}
+          <strong>{ticket.already_tried_label ?? "a similar issue"}</strong> before filing this ticket — it
+          didn't resolve it. {isAdmin && "Worth trying something different rather than repeating that fix."}
+        </div>
+      )}
+
       {related_activity && (
         <div
           className={`mb-6 rounded-lg border p-3 text-sm ${

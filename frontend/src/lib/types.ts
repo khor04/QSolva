@@ -25,6 +25,11 @@ export interface Ticket {
   escalated_by_admin_name: string | null;
   // Null means not yet grouped into a recurring-issue cluster.
   cluster_id: string | null;
+  // Set if the reporter clicked "Doesn't fix it — submit anyway" on a
+  // pre-submit Help Center match — which cluster's answer they already
+  // tried and it didn't work.
+  already_tried_cluster_id: string | null;
+  already_tried_label: string | null;
   title: string;
   description: string;
   category: TicketCategory;

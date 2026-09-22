@@ -63,6 +63,13 @@ class Ticket(Base):
     assigned_admin_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     escalated_by_admin_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     cluster_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("issue_clusters.id"), nullable=True)
+    # Set at creation from NewTicket.tsx's "Doesn't fix it — submit anyway"
+    # flow: which cluster's published Help Center answer the reporter already
+    # tried before filing. Lets the RAG stage avoid resurfacing that same
+    # rejected fix as a fresh suggestion (see services/tickets._run_rag_stage).
+    already_tried_cluster_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("issue_clusters.id"), nullable=True
+    )
     title: Mapped[str] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text)
     category: Mapped[str] = mapped_column(ticket_category_enum)
@@ -107,6 +114,9 @@ class Ticket(Base):
     # needs its own foreign_keys= to disambiguate which column it follows.
     assigned_admin: Mapped["User | None"] = relationship(foreign_keys=[assigned_admin_id])
     escalated_by_admin: Mapped["User | None"] = relationship(foreign_keys=[escalated_by_admin_id])
+    # Two separate FKs to issue_clusters(id) on this table (cluster_id above
+    # is the other), same reason.
+    already_tried_cluster: Mapped["IssueCluster | None"] = relationship(foreign_keys=[already_tried_cluster_id])
 
     @property
     def assigned_admin_name(self) -> str | None:
@@ -115,6 +125,10 @@ class Ticket(Base):
     @property
     def escalated_by_admin_name(self) -> str | None:
         return self.escalated_by_admin.name if self.escalated_by_admin else None
+
+    @property
+    def already_tried_label(self) -> str | None:
+        return self.already_tried_cluster.label if self.already_tried_cluster else None
 
 
 class TicketMessage(Base):

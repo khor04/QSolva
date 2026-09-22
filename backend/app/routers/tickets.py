@@ -84,6 +84,7 @@ def create_ticket(
         priority_source="ai",
         ai_priority_status="pending",
         ai_rag_status="pending",
+        already_tried_cluster_id=payload.already_tried_cluster_id,
         created_at=now,
         updated_at=now,
         response_due_at=response_due_at,

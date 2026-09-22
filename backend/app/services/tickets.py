@@ -197,10 +197,19 @@ async def _run_rag_stage(db: Session, ticket: Ticket) -> None:
         await issue_clustering.assign_cluster(db, ticket, embedding)
 
         distance = TicketEmbedding.embedding.cosine_distance(embedding)
+        conditions = [Ticket.status.in_(["resolved", "closed"]), Ticket.id != ticket.id]
+        if ticket.already_tried_cluster_id is not None:
+            # The reporter already tried this cluster's published answer and
+            # told us it didn't work (see routers/tickets.create_ticket) —
+            # don't let it back in as "evidence" for a fresh suggestion, or
+            # we'd just resurface the same rejected fix.
+            conditions.append(
+                or_(Ticket.cluster_id.is_(None), Ticket.cluster_id != ticket.already_tried_cluster_id)
+            )
         stmt = (
             select(Ticket, TicketEmbedding, distance.label("distance"))
             .join(TicketEmbedding, TicketEmbedding.ticket_id == Ticket.id)
-            .where(Ticket.status.in_(["resolved", "closed"]), Ticket.id != ticket.id)
+            .where(*conditions)
             .order_by(distance)
             .limit(CANDIDATE_POOL_SIZE)
         )

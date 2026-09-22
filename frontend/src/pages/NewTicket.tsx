@@ -25,8 +25,13 @@ export function NewTicket() {
   });
 
   const mutation = useMutation({
-    mutationFn: async () => {
-      const ticket = await api.post<Ticket>("/tickets", { title, description, category });
+    mutationFn: async (alreadyTriedClusterId?: string) => {
+      const ticket = await api.post<Ticket>("/tickets", {
+        title,
+        description,
+        category,
+        already_tried_cluster_id: alreadyTriedClusterId ?? null,
+      });
 
       const results = await Promise.allSettled(
         attachments.map(async (file) => {
@@ -174,7 +179,7 @@ export function NewTicket() {
               </button>
               <button
                 type="button"
-                onClick={() => mutation.mutate()}
+                onClick={() => mutation.mutate(incidentMatch.cluster_id)}
                 disabled={mutation.isPending}
                 className="rounded-md bg-primary px-3 py-1.5 text-sm text-white disabled:opacity-50"
               >
