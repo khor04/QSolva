@@ -29,6 +29,11 @@ export function Register() {
       email,
       password,
       options: {
+        // Without this, Supabase falls back to the project's Site URL
+        // setting (Auth → URL Configuration) for the confirmation link,
+        // which points wherever it was last configured — not necessarily
+        // where this signup actually happened from. Mirrors ForgotPassword.tsx.
+        emailRedirectTo: window.location.origin,
         data: {
           name,
           requested_role: accountType,
