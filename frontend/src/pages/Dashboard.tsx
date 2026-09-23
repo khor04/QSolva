@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -53,11 +54,23 @@ function pct(value: number | null): string {
 }
 
 function MiniBarChart({ bars }: { bars: { label: string; count: number; colorClass?: string }[] }) {
+  const [active, setActive] = useState<number | null>(null);
   const max = Math.max(1, ...bars.map((b) => b.count));
   return (
     <div className="flex items-end gap-1" style={{ height: 100 }}>
-      {bars.map((b) => (
-        <div key={b.label} className="flex flex-1 flex-col items-center gap-1" title={`${b.label}: ${b.count}`}>
+      {bars.map((b, i) => (
+        <div
+          key={b.label}
+          className="relative flex flex-1 flex-col items-center gap-1"
+          onMouseEnter={() => setActive(i)}
+          onMouseLeave={() => setActive((a) => (a === i ? null : a))}
+          onClick={() => setActive((a) => (a === i ? null : i))}
+        >
+          {active === i && (
+            <div className="absolute -top-7 z-10 whitespace-nowrap rounded-md bg-neutral-800 px-2 py-1 text-xs font-medium text-white shadow-sm">
+              {b.label}: {b.count}
+            </div>
+          )}
           <div
             className={`w-full rounded-t ${b.colorClass ?? "bg-primary/70"}`}
             style={{ height: `${Math.max(4, (b.count / max) * 80)}px` }}

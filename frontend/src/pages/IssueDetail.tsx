@@ -200,9 +200,10 @@ function Timeline({ timeline }: { timeline: IssueClusterDetail["timeline"] }) {
           className="relative flex flex-1 flex-col items-center gap-1"
           onMouseEnter={() => setHovered(i)}
           onMouseLeave={() => setHovered((h) => (h === i ? null : h))}
+          onClick={() => setHovered((h) => (h === i ? null : i))}
         >
           {hovered === i && (
-            <div className="absolute -top-7 z-10 rounded-md bg-neutral-800 px-2 py-1 text-xs font-medium text-white shadow-sm">
+            <div className="absolute -top-7 z-10 whitespace-nowrap rounded-md bg-neutral-800 px-2 py-1 text-xs font-medium text-white shadow-sm">
               {counts[i]} ticket{counts[i] === 1 ? "" : "s"}
             </div>
           )}
