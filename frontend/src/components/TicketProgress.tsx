@@ -69,14 +69,14 @@ function Stepper({
   }
 
   return (
-    <ol className="flex items-center">
+    <ol className="flex items-center overflow-x-auto">
       {STEPS.map((label, i) => {
         const done = i < current || closed;
         const isCurrent = i === current && !closed;
         const action = actionFor(i);
         const dot = (
           <span
-            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 text-[10px] font-bold ${
+            className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 text-[8px] font-bold sm:h-5 sm:w-5 sm:text-[10px] ${
               done
                 ? "border-primary bg-primary text-white"
                 : isCurrent
@@ -91,7 +91,7 @@ function Stepper({
         );
         const text = (
           <span
-            className={`text-xs sm:text-sm ${
+            className={`whitespace-nowrap text-[10px] sm:text-sm ${
               isCurrent ? "font-semibold text-neutral-900" : done ? "text-neutral-700" : "text-neutral-400"
             }`}
           >
@@ -99,25 +99,25 @@ function Stepper({
           </span>
         );
         return (
-          <li key={label} className="flex flex-1 items-center last:flex-none">
+          <li key={label} className="flex shrink-0 items-center sm:flex-1 sm:last:flex-none">
             {action ? (
               <button
                 onClick={action.run}
                 disabled={admin?.busy}
                 title={action.title}
-                className="flex items-center gap-2 rounded-md py-1 pr-1 hover:bg-primary-light/20 disabled:opacity-50"
+                className="flex items-center gap-1 rounded-md py-1 pr-0 hover:bg-primary-light/20 disabled:opacity-50 sm:gap-2 sm:pr-1"
               >
                 {dot}
                 {text}
               </button>
             ) : (
-              <span className="flex items-center gap-2 py-1 pr-1">
+              <span className="flex items-center gap-1 py-1 pr-0 sm:gap-2 sm:pr-1">
                 {dot}
                 {text}
               </span>
             )}
             {i < STEPS.length - 1 && (
-              <span className={`mx-2 h-0.5 flex-1 rounded ${i < current || closed ? "bg-primary" : "bg-border-warm"}`} />
+              <span className={`mx-1 h-0.5 w-3 rounded sm:mx-2 sm:w-auto sm:flex-1 ${i < current || closed ? "bg-primary" : "bg-border-warm"}`} />
             )}
           </li>
         );
