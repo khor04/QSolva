@@ -32,14 +32,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [profileError, setProfileError] = useState<string | null>(null);
+  // getSession() restoring a persisted session from storage is async — right
+  // after mount, `session` is still null even when the visitor IS logged in,
+  // purely because that check hasn't resolved yet. Without this flag the
+  // profile effect below can't tell "no session yet" apart from "genuinely
+  // no session", takes the `!userId` branch, and flips `loading` to false
+  // early — bouncing ProtectedRoute to /login (replacing history, losing the
+  // current URL) for a split second before the real session comes in.
+  const [sessionChecked, setSessionChecked] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
+      setSessionChecked(true);
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
+      setSessionChecked(true);
     });
 
     return () => listener.subscription.unsubscribe();
@@ -48,6 +58,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const userId = session?.user.id ?? null;
 
   useEffect(() => {
+    if (!sessionChecked) return; // still waiting on the initial getSession() — don't decide "logged out" yet
+
     if (!userId) {
       setProfile(null);
       setLoading(false);
@@ -89,8 +101,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // session reference), which would otherwise re-trigger this effect,
     // flip `loading` back to true, and (via ProtectedRoute) unmount the
     // entire page mid-interaction — wiping out whatever the user was typing.
+    // sessionChecked only ever flips false -> true once, so including it just
+    // lets this effect (re-)run with the now-accurate userId once the initial
+    // check resolves, without introducing the token-refresh re-fetch loop above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  }, [userId, sessionChecked]);
 
   return (
     <AuthContext.Provider value={{ session, profile, loading, profileError }}>

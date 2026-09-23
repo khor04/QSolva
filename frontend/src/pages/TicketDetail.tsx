@@ -1,5 +1,5 @@
 import { useRef, useState, type FormEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -226,6 +226,13 @@ export function TicketDetail() {
 
   return (
     <div>
+      <Link
+        to={isAdmin ? "/queue" : "/tickets"}
+        className="mb-4 inline-block text-sm text-primary-dark hover:underline"
+      >
+        ← {isAdmin ? "Ticket Queue" : "My Tickets"}
+      </Link>
+
       <div className="mb-6 flex items-center gap-3">
         <h1 className="text-xl font-semibold">{ticket.title}</h1>
         <PriorityBadge priority={ticket.priority} />
