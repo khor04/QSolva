@@ -16,6 +16,7 @@ from sqlalchemy import and_, or_, select
 
 from app.db import SessionLocal
 from app.models import Notification, Ticket
+from app.services.alerts import send_admin_alert
 from app.services.notifications import notify, notify_admins
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,8 @@ def check_sla_risk() -> int:
                 notify(db, ticket.assigned_admin_id, "sla_risk", ticket.id, message=kind)
             else:
                 notify_admins(db, "sla_risk", ticket.id, message=kind)
+            deadline = "first response" if kind == "response" else "resolution"
+            send_admin_alert(f"🟡 SLA risk — {ticket.title} is past its {deadline} deadline", ticket.id)
             flagged += 1
 
         db.commit()

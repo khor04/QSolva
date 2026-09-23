@@ -30,7 +30,7 @@ feedback_outcome_enum = ENUM(
 notification_type_enum = ENUM(
     "ticket_updated", "ticket_replied", "ticket_resolved", "resolution_confirm_needed",
     "new_critical_ticket", "staff_replied", "suggestion_failed", "sla_risk", "ticket_escalated",
-    "incident_alert",
+    "incident_alert", "new_high_priority_ticket",
     name="notification_type", create_type=False,
 )
 kb_article_status_enum = ENUM("draft", "published", name="kb_article_status", create_type=False)

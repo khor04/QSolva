@@ -11,6 +11,7 @@ const MESSAGES: Record<NotificationType, (n: Notification, viewerRole?: Role) =>
   ticket_resolved: (n) => `"${n.ticket_title ?? "a ticket"}" was confirmed resolved.`,
   resolution_confirm_needed: (n) => `"${n.ticket_title ?? "a ticket"}" was marked resolved — please confirm.`,
   new_critical_ticket: (n) => `New critical ticket: "${n.ticket_title ?? "a ticket"}".`,
+  new_high_priority_ticket: (n) => `New high-priority ticket: "${n.ticket_title ?? "a ticket"}".`,
   staff_replied: (n) => `Staff replied on "${n.ticket_title ?? "a ticket"}".`,
   suggestion_failed: (n) => `AI couldn't analyze "${n.ticket_title ?? "a ticket"}".`,
   // message says which deadline was missed (see services/sla.check_sla_risk);

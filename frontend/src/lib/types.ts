@@ -113,6 +113,7 @@ export type NotificationType =
   | "ticket_resolved"
   | "resolution_confirm_needed"
   | "new_critical_ticket"
+  | "new_high_priority_ticket"
   | "staff_replied"
   | "suggestion_failed"
   | "sla_risk"

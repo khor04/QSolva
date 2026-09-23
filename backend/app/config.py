@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     business_timezone: str = "UTC"
     business_hours_start: int = 9
     business_hours_end: int = 18
+    # Slack incoming webhook for admin-actionable alerts (critical/high
+    # tickets, SLA risk, admin-directed escalations, new incidents) — see
+    # services/alerts.py. Optional: alerts are skipped (in-app notifications
+    # still work as normal) if this isn't set.
+    admin_alert_slack_webhook_url: str | None = None
+    # Used to build a clickable ticket link in those Slack alerts. Optional —
+    # alerts are just plain text with no link if this isn't set.
+    app_base_url: str | None = None
 
 
 settings = Settings()

@@ -16,12 +16,13 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import AiSuggestion, Feedback, IssueCluster, Ticket, TicketEmbedding, TicketMessage, User
 from app.services import ai
-from app.services.notifications import all_staff_ids, notify
+from app.services.alerts import send_admin_alert
+from app.services.notifications import all_staff_ids, notify, notify_admins
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +187,10 @@ def start_incident(
     Staff who already have an open ticket in the cluster still get the
     ticket-scoped notification (so it links straight to their own ticket)
     even in broadcast mode; only staff with no ticket in the cluster get the
-    generic incident_alert."""
+    generic incident_alert. Every other admin also gets notified (excluding
+    whoever declared it) — otherwise only the declaring admin would know
+    this incident exists, and others could end up independently
+    investigating or replying to the same problem."""
     was_active = cluster.incident_status == "active"
     cluster.incident_status = "active"
     cluster.incident_message = message
@@ -208,6 +212,12 @@ def start_incident(
                     continue  # already got the ticket-scoped notification above
                 notify(db, staff_id, "incident_alert", message=message)
                 notified += 1
+        notify_admins(db, "incident_alert", message=message, exclude_user_id=admin.id)
+        send_admin_alert(f"🔶 New incident declared by {admin.name}: {cluster.label} — {message}")
+        other_admin_count = db.execute(
+            select(func.count()).select_from(User).where(User.role == "admin", User.id != admin.id)
+        ).scalar_one()
+        notified += other_admin_count
     db.commit()
     return notified
 

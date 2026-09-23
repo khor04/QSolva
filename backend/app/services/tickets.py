@@ -14,6 +14,7 @@ from app.db import SessionLocal
 from app.models import AiSuggestion, Ticket, TicketAttachment, TicketEmbedding, TicketMessage, User
 from app.services import ai
 from app.services import issues as issue_clustering
+from app.services.alerts import send_admin_alert
 from app.services.notifications import notify, notify_admins
 from app.services.sla_policy import compute_due_dates
 
@@ -165,6 +166,7 @@ async def _run_priority_stage(db: Session, ticket: Ticket) -> None:
         return
 
     was_critical = ticket.priority == "critical"
+    was_high = ticket.priority == "high"
     ticket.priority = priority
     ticket.priority_confidence = confidence
     ticket.priority_reason = reason
@@ -173,11 +175,15 @@ async def _run_priority_stage(db: Session, ticket: Ticket) -> None:
     # Reclassifying can move the ticket onto a different SLA clock (e.g.
     # medium's business-hours clock to critical's 24/7 one).
     ticket.response_due_at, ticket.resolution_due_at = compute_due_dates(ticket.created_at, priority)
-    # Tied to the transition into critical (not just the classification
+    # Tied to the transition into critical/high (not just the classification
     # result) so a retry that reclassifies an already-critical ticket as
     # critical again doesn't re-notify admins for no new reason.
     if priority == "critical" and not was_critical:
         notify_admins(db, "new_critical_ticket", ticket.id)
+        send_admin_alert(f"🔴 Critical ticket: {ticket.title}", ticket.id)
+    elif priority == "high" and not was_high:
+        notify_admins(db, "new_high_priority_ticket", ticket.id)
+        send_admin_alert(f"🟠 High-priority ticket: {ticket.title}", ticket.id)
     db.commit()
 
 
@@ -319,11 +325,15 @@ def escalate_ticket(
         ticket.assigned_admin_id = target_admin_id
         ticket.status = "in_progress"
         notify(db, target_admin_id, "ticket_escalated", ticket.id)
+        target_admin = db.get(User, target_admin_id)
+        target_name = target_admin.name if target_admin else "another admin"
+        send_admin_alert(f"🔁 Ticket handed off to {target_name}: {ticket.title}", ticket.id)
     else:
         ticket.assigned_admin_id = None
         ticket.status = "escalated"
         notify_admins(db, "ticket_escalated", ticket.id, exclude_user_id=escalating_admin_id)
         notify(db, ticket.staff_id, "ticket_escalated", ticket.id)
+        send_admin_alert(f"🔁 Ticket escalated, needs an owner: {ticket.title}", ticket.id)
     db.commit()
 
 
