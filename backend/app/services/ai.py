@@ -80,15 +80,51 @@ async def _fetch_image_parts(attachment_urls: list[str]) -> list[dict]:
     return parts
 
 
+def _is_unprocessable_image_error(exc: httpx.HTTPStatusError) -> bool:
+    """Gemini's response for a corrupted/malformed image it can't decode —
+    distinct from a merely unreachable URL, which _fetch_image_parts already
+    handles per-image. Matched narrowly on the actual error message (not
+    just "any 400") so an unrelated bad-request bug elsewhere in the prompt
+    still surfaces as a real failure instead of being silently retried away."""
+    if exc.response.status_code != 400:
+        return False
+    try:
+        message = exc.response.json().get("error", {}).get("message", "").lower()
+    except ValueError:
+        return False
+    return "image" in message and "process" in message
+
+
 async def _generate_json(prompt: str, image_parts: list[dict] | None = None) -> dict:
     url = f"{GEMINI_BASE}/models/{settings.llm_model}:generateContent?key={settings.gemini_api_key}"
-    payload = {
-        "contents": [{"parts": [{"text": prompt}, *(image_parts or [])]}],
-        "generationConfig": {"responseMimeType": "application/json"},
-    }
-    resp = await _post_with_retry(url, payload)
-    text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-    return json.loads(text)
+
+    async def call(text: str, parts: list[dict]) -> dict:
+        payload = {
+            "contents": [{"parts": [{"text": text}, *parts]}],
+            "generationConfig": {"responseMimeType": "application/json"},
+        }
+        resp = await _post_with_retry(url, payload)
+        response_text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+        return json.loads(response_text)
+
+    try:
+        return await call(prompt, image_parts or [])
+    except httpx.HTTPStatusError as e:
+        if image_parts and _is_unprocessable_image_error(e):
+            # A single corrupted attachment shouldn't take down AI enrichment
+            # for the whole ticket — retry text-only rather than failing the
+            # stage outright. The prompt text may still reference "the
+            # screenshot below" (it was built assuming image_parts would be
+            # attached), so correct that explicitly rather than leaving a
+            # dangling reference to an image that's no longer there.
+            logger.warning("Gemini rejected an attached image as unprocessable — retrying text-only")
+            corrected_prompt = (
+                prompt
+                + "\n\n(Note: an attached image could not be processed and was omitted — "
+                "base your answer on the text above only.)"
+            )
+            return await call(corrected_prompt, [])
+        raise
 
 
 async def classify_priority(
