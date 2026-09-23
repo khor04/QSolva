@@ -80,7 +80,8 @@ function startOfNextLocalDay(day: string): string {
 function QueueTable({ tickets, currentAdminId, now }: { tickets: Ticket[]; currentAdminId?: string; now: number }) {
   return (
     <div className="overflow-hidden rounded-lg border border-border-warm bg-white">
-      <table className="w-full table-fixed text-left text-sm">
+      <div className="overflow-x-auto">
+      <table className="w-full min-w-[720px] table-fixed text-left text-sm">
         <colgroup>
           <col className="w-[27%]" />
           <col className="w-[10%]" />
@@ -147,6 +148,7 @@ function QueueTable({ tickets, currentAdminId, now }: { tickets: Ticket[]; curre
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -161,7 +163,8 @@ function waitingSince(resolvedAt: string | null): string {
 function ResolvedTable({ tickets }: { tickets: Ticket[] }) {
   return (
     <div className="overflow-hidden rounded-lg border border-border-warm bg-white">
-      <table className="w-full table-fixed text-left text-sm">
+      <div className="overflow-x-auto">
+      <table className="w-full min-w-[480px] table-fixed text-left text-sm">
         <colgroup>
           <col className="w-[55%]" />
           <col className="w-[20%]" />
@@ -188,6 +191,7 @@ function ResolvedTable({ tickets }: { tickets: Ticket[] }) {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

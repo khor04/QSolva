@@ -11,7 +11,8 @@ const PAGE_SIZE = 10;
 function TicketTable({ tickets }: { tickets: Ticket[] }) {
   return (
     <div className="overflow-hidden rounded-lg border border-border-warm bg-white">
-      <table className="w-full table-fixed text-left text-sm">
+      <div className="overflow-x-auto">
+      <table className="w-full min-w-[560px] table-fixed text-left text-sm">
         <colgroup>
           <col className="w-[50%]" />
           <col className="w-[15%]" />
@@ -43,6 +44,7 @@ function TicketTable({ tickets }: { tickets: Ticket[] }) {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

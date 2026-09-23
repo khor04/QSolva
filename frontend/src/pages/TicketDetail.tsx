@@ -315,34 +315,36 @@ export function TicketDetail() {
             ))}
             {messages.length === 0 && <p className="text-sm text-neutral-400">No replies yet.</p>}
           </div>
-          <form onSubmit={handleReply} className="flex gap-2">
+          <form onSubmit={handleReply} className="flex flex-col gap-2 sm:flex-row">
             <input
               value={reply}
               onChange={(e) => setReply(e.target.value)}
               placeholder="Write a reply..."
-              className="flex-1 rounded-md border border-border-warm px-3 py-2 text-sm"
+              className="w-full flex-1 rounded-md border border-border-warm px-3 py-2 text-sm"
             />
-            <button
-              type="submit"
-              disabled={sendMessage.isPending || !reply.trim()}
-              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-            >
-              Reply
-            </button>
-            {/* Admin-only: post the reply and move the ticket to Resolved in
-                one action, so a fix doesn't get typed and then left sitting
-                in "In progress" because a second click was easy to skip. */}
-            {isAdmin && !isTicketDone && (
+            <div className="flex gap-2">
               <button
-                type="button"
-                onClick={handleReplyAndResolve}
+                type="submit"
                 disabled={sendMessage.isPending || !reply.trim()}
-                title="Post this reply and mark the ticket resolved"
-                className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-50 sm:flex-none"
               >
-                Send &amp; Resolve
+                Reply
               </button>
-            )}
+              {/* Admin-only: post the reply and move the ticket to Resolved in
+                  one action, so a fix doesn't get typed and then left sitting
+                  in "In progress" because a second click was easy to skip. */}
+              {isAdmin && !isTicketDone && (
+                <button
+                  type="button"
+                  onClick={handleReplyAndResolve}
+                  disabled={sendMessage.isPending || !reply.trim()}
+                  title="Post this reply and mark the ticket resolved"
+                  className="flex-1 rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50 sm:flex-none"
+                >
+                  Send &amp; Resolve
+                </button>
+              )}
+            </div>
           </form>
 
           {isAdmin && !isTicketDone && (

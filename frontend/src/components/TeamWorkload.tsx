@@ -23,7 +23,7 @@ export function TeamWorkload() {
       <h2 className="mb-3 text-sm font-medium text-neutral-500">Team Workload</h2>
       <ul className="space-y-2">
         {data.map((admin) => (
-          <li key={admin.id} className="grid grid-cols-[8rem_1fr_auto] items-center gap-3 text-sm">
+          <li key={admin.id} className="grid grid-cols-1 gap-1.5 text-sm sm:grid-cols-[8rem_1fr_auto] sm:items-center sm:gap-3">
             <span className="truncate font-medium">
               {admin.name}
               {admin.id === profile?.id && <span className="font-normal text-neutral-400"> (you)</span>}
@@ -34,7 +34,7 @@ export function TeamWorkload() {
                 style={{ width: `${(admin.active_tickets / max) * 100}%` }}
               />
             </div>
-            <span className="whitespace-nowrap text-neutral-500">
+            <span className="text-neutral-500 sm:whitespace-nowrap">
               {admin.active_tickets} active · {admin.high_critical_tickets} high/critical ·{" "}
               <span className={admin.overdue_tickets > 0 ? "font-medium text-red-600" : ""}>
                 {admin.overdue_tickets} overdue
